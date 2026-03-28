@@ -1,8 +1,38 @@
 /* =========================================================
    D&D 5e SRD-Safe Character Builder + Optimizer
    Vanilla JS – no frameworks, no external dependencies
+   
+   VERSION: 2.1 - Improved with better validation and error handling
    ========================================================= */
 "use strict";
+
+// =========================================================
+// CONSTANTS - Extracted magic numbers for maintainability
+// =========================================================
+const POINT_BUY_MAX_POINTS = 27;
+const POINT_BUY_MIN_SCORE = 8;
+const POINT_BUY_MAX_SCORE = 15;
+const ABILITY_SCORE_MIN = 3;
+const ABILITY_SCORE_MAX = 20;
+const MAX_LEVEL = 20;
+const MIN_LEVEL = 1;
+const MAX_SPELL_LEVEL = 9;
+const MAX_MAGIC_BONUS = 5;
+
+// Combat calculation constants
+const D20_SIDES = 20;
+const BASE_AC = 10;
+const BASE_SPELL_DC = 8;
+const MIN_HIT_CHANCE = 0.05; // Natural 1 always misses
+const MAX_HIT_CHANCE = 0.95; // Natural 20 always hits
+const AC_TO_HP_MULTIPLIER = 0.07; // How much each AC point affects effective HP
+const NOVA_BURST_BONUS = 0.6;
+const DAMAGE_FEAT_BONUS = 1.5;
+const INITIATIVE_FEAT_BONUS = 3;
+
+// ASI/Feat breakpoint levels
+const ASI_LEVELS = [4, 8, 12, 16, 19];
+const MILESTONE_LEVELS = [1, 3, 5, 8, 11, 17, 20];
 
 // =========================================================
 // 1. Data / Constants
@@ -93,108 +123,331 @@ const DEFAULT_SPELL_SLOTS = () => ({ 1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0, 7: 0, 8
 const STORAGE_KEY = "dnd5e_srd_safe_builder_v2_optimizer";
 
 // =========================================================
-// 2. Rules Math
+// 2. Input Validation & Sanitization
 // =========================================================
-function modFromScore(score) { return Math.floor((Number(score || 10) - 10) / 2); }
-function proficiencyBonus(level) { return Math.floor((Number(level || 1) - 1) / 4) + 2; }
-function clamp(n, min, max) { return Math.max(min, Math.min(max, n)); }
-function pointBuyCost(s) { const t = [0,0,0,0,0,0,0,0,0,1,2,3,4,5,7,9]; return t[clamp(Number(s),0,15)] || 0; }
 
-function getClassData(key) { return CLASSES[key] || CLASSES.fighter; }
+/**
+ * Validates and clamps an ability score based on mode
+ */
+function validateAbilityScore(score, mode) {
+  const num = Number(score);
+  if (isNaN(num)) return mode === "pointbuy" ? POINT_BUY_MIN_SCORE : 10;
+  
+  if (mode === "pointbuy") {
+    return clamp(num, POINT_BUY_MIN_SCORE, POINT_BUY_MAX_SCORE);
+  }
+  return clamp(num, ABILITY_SCORE_MIN, ABILITY_SCORE_MAX);
+}
 
+/**
+ * Validates a level value
+ */
+function validateLevel(level) {
+  const num = Number(level);
+  if (isNaN(num)) return MIN_LEVEL;
+  return clamp(num, MIN_LEVEL, MAX_LEVEL);
+}
+
+/**
+ * Validates a spell slot level
+ */
+function validateSpellSlot(slot) {
+  const num = Number(slot);
+  if (isNaN(num) || num < 0) return 0;
+  return Math.min(num, MAX_SPELL_LEVEL);
+}
+
+/**
+ * Validates magic bonus
+ */
+function validateMagicBonus(bonus) {
+  const num = Number(bonus);
+  if (isNaN(num) || num < 0) return 0;
+  return Math.min(num, MAX_MAGIC_BONUS);
+}
+
+/**
+ * Validates that a class key exists
+ */
+function validateClassKey(key) {
+  return CLASS_OPTIONS.includes(key) ? key : "fighter";
+}
+
+/**
+ * Validates that an ability key exists
+ */
+function validateAbilityKey(key) {
+  return ABILITIES.includes(key) ? key : "str";
+}
+
+// =========================================================
+// 3. Rules Math (with null safety)
+// =========================================================
+
+function modFromScore(score) { 
+  const num = Number(score);
+  if (isNaN(num)) return 0;
+  return Math.floor((num - 10) / 2); 
+}
+
+function proficiencyBonus(level) { 
+  const lvl = validateLevel(level);
+  return Math.floor((lvl - 1) / 4) + 2; 
+}
+
+function clamp(n, min, max) { 
+  const num = Number(n);
+  if (isNaN(num)) return min;
+  return Math.max(min, Math.min(max, num)); 
+}
+
+/**
+ * Calculate point buy cost for a given score
+ * Scores below 8 or above 15 return maximum cost
+ */
+function pointBuyCost(s) { 
+  const score = Number(s);
+  if (isNaN(score) || score < POINT_BUY_MIN_SCORE) return 0;
+  if (score > POINT_BUY_MAX_SCORE) return 9;
+  
+  const costTable = [0,0,0,0,0,0,0,0,0,1,2,3,4,5,7,9];
+  return costTable[score] || 0;
+}
+
+/**
+ * Safely get class data with fallback
+ */
+function getClassData(key) { 
+  const validKey = validateClassKey(key);
+  return CLASSES[validKey]; 
+}
+
+/**
+ * Calculate estimated HP for a character
+ */
 function getEstimatedHP(level, classKey, conMod) {
   const hd = getClassData(classKey).hitDie;
-  const lvl = Number(level || 1);
-  if (lvl <= 1) return hd + conMod;
-  return hd + conMod + (lvl - 1) * (Math.floor(hd / 2) + 1 + conMod);
+  const lvl = validateLevel(level);
+  const con = Number(conMod) || 0;
+  
+  if (lvl <= 1) return hd + con;
+  
+  const avgRoll = Math.floor(hd / 2) + 1;
+  return hd + con + (lvl - 1) * (avgRoll + con);
 }
 
+/**
+ * Estimate armor class based on character and equipment
+ */
 function getArmorClassEstimate(character, dexMod) {
-  const cls = getClassData(character.class);
-  const shield = character.hasShield ? 2 : 0;
-  const mag = Number(character.armorMagicBonus || 0);
-  if (cls.armorType === "heavy")    return 16 + shield + mag;
-  if (cls.armorType === "medium")   return 14 + clamp(dexMod, 0, 2) + shield + mag;
-  if (cls.armorType === "light")    return 11 + dexMod + shield + mag;
-  if (cls.armorType === "unarmored") return 10 + dexMod + Math.max(modFromScore(character.abilities.wis), 0);
-  return 10 + dexMod;
+  try {
+    const cls = getClassData(character.class);
+    const shield = character.hasShield ? 2 : 0;
+    const mag = validateMagicBonus(character.armorMagicBonus);
+    const dex = Number(dexMod) || 0;
+    
+    if (cls.armorType === "heavy")    return 16 + shield + mag;
+    if (cls.armorType === "medium")   return 14 + clamp(dex, 0, 2) + shield + mag;
+    if (cls.armorType === "light")    return 11 + dex + shield + mag;
+    if (cls.armorType === "unarmored") {
+      const wisBonus = Math.max(modFromScore(character.abilities?.wis || 10), 0);
+      return BASE_AC + dex + wisBonus;
+    }
+    return BASE_AC + dex;
+  } catch (error) {
+    console.error("Error calculating AC:", error);
+    return BASE_AC;
+  }
 }
 
+/**
+ * Get the casting ability for a character with fallback
+ */
 function getCasterAbility(character) {
-  return character.spellcasting.castingAbility || getClassData(character.class).defaultCastingAbility || "int";
+  if (!character || !character.spellcasting) return "int";
+  
+  const specified = character.spellcasting.castingAbility;
+  if (specified && ABILITIES.includes(specified)) return specified;
+  
+  const classDefault = getClassData(character.class).defaultCastingAbility;
+  return classDefault || "int";
 }
 
+/**
+ * Estimate number of attacks per round based on class and level
+ */
 function estimateAttacksPerRound(classKey, level) {
-  const cls = getClassData(classKey);
-  return (cls.features.extraAttackLevel && Number(level) >= cls.features.extraAttackLevel) ? 2 : 1;
+  try {
+    const cls = getClassData(classKey);
+    const lvl = validateLevel(level);
+    
+    if (!cls.features || !cls.features.extraAttackLevel) return 1;
+    return lvl >= cls.features.extraAttackLevel ? 2 : 1;
+  } catch (error) {
+    console.error("Error estimating attacks:", error);
+    return 1;
+  }
 }
 
+/**
+ * Calculate effective hit chance including advantage
+ */
 function effectiveHitChance(attackBonus, targetAC, advantageRate = 0) {
-  const needed = clamp(targetAC - attackBonus, 2, 19);
-  const base = clamp((21 - needed) / 20, 0.05, 0.95);
-  const adv = 1 - Math.pow(1 - base, 2);
-  return base * (1 - advantageRate) + adv * advantageRate;
+  const bonus = Number(attackBonus) || 0;
+  const ac = Number(targetAC) || 10;
+  const advRate = clamp(advantageRate, 0, 1);
+  
+  const needed = clamp(ac - bonus, 2, 19);
+  const base = clamp((D20_SIDES + 1 - needed) / D20_SIDES, MIN_HIT_CHANCE, MAX_HIT_CHANCE);
+  const withAdvantage = 1 - Math.pow(1 - base, 2);
+  
+  return base * (1 - advRate) + withAdvantage * advRate;
 }
 
+/**
+ * Calculate chance of target failing a saving throw
+ */
 function saveFailChance(saveDC, targetSaveBonus) {
-  const needed = clamp(saveDC - targetSaveBonus, 2, 19);
-  return clamp((needed - 1) / 20, 0.05, 0.95);
+  const dc = Number(saveDC) || 10;
+  const bonus = Number(targetSaveBonus) || 0;
+  
+  const needed = clamp(dc - bonus, 2, 19);
+  return clamp((needed - 1) / D20_SIDES, MIN_HIT_CHANCE, MAX_HIT_CHANCE);
 }
 
+/**
+ * Calculate weapon attack bonus
+ */
 function weaponAtkBonus(weapon, abilities, pb) {
-  const mod = modFromScore(abilities[weapon.ability] || 10);
+  if (!weapon || !abilities) return 0;
+  
+  const abilityKey = validateAbilityKey(weapon.ability);
+  const mod = modFromScore(abilities[abilityKey] || 10);
   const prof = weapon.proficient ? pb : 0;
-  return mod + prof + Number(weapon.magicBonus || 0);
+  const magic = validateMagicBonus(weapon.magicBonus);
+  
+  return mod + prof + magic;
 }
 
+/**
+ * Calculate average weapon damage with error handling for damage string parsing
+ */
 function weaponAvgDamage(weapon, abilities, pb) {
-  const mod = modFromScore(abilities[weapon.ability] || 10);
-  const magicBonus = Number(weapon.magicBonus || 0);
-  const dmg = String(weapon.damage || "1d8");
-  const match = dmg.match(/(\d+)d(\d+)/i);
-  let diceAvg = 4.5;
-  if (match) { const n = Number(match[1]); const d = Number(match[2]); diceAvg = n * ((d + 1) / 2); }
-  return (diceAvg + mod + magicBonus).toFixed(1);
+  if (!weapon || !abilities) return "0.0";
+  
+  try {
+    const abilityKey = validateAbilityKey(weapon.ability);
+    const mod = modFromScore(abilities[abilityKey] || 10);
+    const magicBonus = validateMagicBonus(weapon.magicBonus);
+    const dmg = String(weapon.damage || "1d8");
+    
+    // Parse dice notation (e.g., "2d6", "1d8+3")
+    const match = dmg.match(/(\d+)d(\d+)/i);
+    let diceAvg = 4.5; // Default to d8 average
+    
+    if (match) { 
+      const numDice = Number(match[1]) || 1;
+      const dieSize = Number(match[2]) || 8;
+      diceAvg = numDice * ((dieSize + 1) / 2); 
+    }
+    
+    return (diceAvg + mod + magicBonus).toFixed(1);
+  } catch (error) {
+    console.error("Error calculating weapon damage:", error, weapon);
+    return "0.0";
+  }
 }
 
 // =========================================================
-// 3. Optimizer Logic
+// 4. Optimizer Logic
 // =========================================================
+
+/**
+ * Determine the primary ability score for a given class and objective
+ */
 function getPrimaryAbilityForObjective(classKey, objective) {
   const cls = getClassData(classKey);
-  if (objective === "controller") return cls.defaultCastingAbility || "int";
-  if (objective === "skill") return classKey === "rogue" ? "dex" : classKey === "bard" ? "cha" : cls.defaultCastingAbility || cls.weaponStyle || "dex";
-  if (cls.spellcasting && ["bard","cleric","druid","sorcerer","warlock","wizard"].includes(classKey)) {
-    if (objective === "balanced") return cls.defaultCastingAbility || "int";
+  
+  if (objective === "controller") {
+    return cls.defaultCastingAbility || "int";
   }
+  
+  if (objective === "skill") {
+    if (classKey === "rogue") return "dex";
+    if (classKey === "bard") return "cha";
+    return cls.defaultCastingAbility || cls.weaponStyle || "dex";
+  }
+  
+  // For casters in balanced mode, prioritize casting stat
+  if (cls.spellcasting && ["bard","cleric","druid","sorcerer","warlock","wizard"].includes(classKey)) {
+    if (objective === "balanced") {
+      return cls.defaultCastingAbility || "int";
+    }
+  }
+  
   return cls.weaponStyle || "str";
 }
 
+/**
+ * Auto-assign ability scores using point buy optimization
+ * Intelligently distributes 27 points based on class and objective
+ */
 function autoAssignPointBuy(classKey, objective) {
   const primary = getPrimaryAbilityForObjective(classKey, objective);
   const cls = getClassData(classKey);
-  const secondary = objective === "tank" ? "con" : cls.spellcasting ? "con" : primary === "dex" ? "con" : "dex";
-  const tertiary = objective === "controller" ? "con" : objective === "skill" ? "wis" : cls.defaultCastingAbility && cls.defaultCastingAbility !== primary ? cls.defaultCastingAbility : "wis";
+  
+  // Determine secondary and tertiary stats
+  const secondary = objective === "tank" ? "con" 
+    : cls.spellcasting ? "con" 
+    : primary === "dex" ? "con" 
+    : "dex";
+    
+  const tertiary = objective === "controller" ? "con"
+    : objective === "skill" ? "wis"
+    : cls.defaultCastingAbility && cls.defaultCastingAbility !== primary ? cls.defaultCastingAbility
+    : "wis";
+  
+  // Initialize all scores to minimum
   const scores = { str: 8, dex: 8, con: 8, int: 8, wis: 8, cha: 8 };
+  
+  // Create priority list
   const priorities = [primary, secondary, tertiary, ...ABILITIES.filter(a => ![primary,secondary,tertiary].includes(a))];
   const targets = [15, 14, 13, 12, 10, 8];
-  priorities.forEach((ab, i) => { scores[ab] = targets[i] !== undefined ? targets[i] : 8; });
+  
+  // Apply initial distribution
+  priorities.forEach((ab, i) => { 
+    scores[ab] = targets[i] !== undefined ? targets[i] : 8; 
+  });
+  
+  // Balance to exactly 27 points
   let cost = ABILITIES.reduce((s, a) => s + pointBuyCost(scores[a]), 0);
-  while (cost > 27) {
-    const r = priorities.slice().reverse().find(a => scores[a] > 8 && a !== primary);
-    if (!r) break;
-    scores[r]--;
+  
+  // Reduce if over budget (shouldn't happen with standard targets, but safety check)
+  while (cost > POINT_BUY_MAX_POINTS) {
+    const reducible = priorities.slice().reverse().find(a => scores[a] > POINT_BUY_MIN_SCORE && a !== primary);
+    if (!reducible) break;
+    scores[reducible]--;
     cost = ABILITIES.reduce((s, a) => s + pointBuyCost(scores[a]), 0);
   }
-  while (cost < 27) {
-    const u = priorities.find(a => scores[a] < 15 && (pointBuyCost(scores[a]+1) - pointBuyCost(scores[a])) <= (27 - cost));
-    if (!u) break;
-    cost += pointBuyCost(scores[u]+1) - pointBuyCost(scores[u]);
-    scores[u]++;
+  
+  // Spend remaining points
+  while (cost < POINT_BUY_MAX_POINTS) {
+    const upgradable = priorities.find(a => {
+      if (scores[a] >= POINT_BUY_MAX_SCORE) return false;
+      const increase = pointBuyCost(scores[a] + 1) - pointBuyCost(scores[a]);
+      return increase <= (POINT_BUY_MAX_POINTS - cost);
+    });
+    if (!upgradable) break;
+    cost += pointBuyCost(scores[upgradable] + 1) - pointBuyCost(scores[upgradable]);
+    scores[upgradable]++;
   }
+  
   return scores;
 }
 
+/**
+ * Get suggested skill proficiencies based on class and objective
+ */
 function getSuggestedSkills(classKey, objective) {
   const byObjective = {
     sustained_dpr: ["athletics","perception","stealth"],
@@ -204,140 +457,248 @@ function getSuggestedSkills(classKey, objective) {
     skill:         ["stealth","perception","persuasion"],
     balanced:      ["perception","insight","athletics"],
   };
+  
   const byClass = {
     rogue:   ["stealth","perception","acrobatics","investigation"],
     bard:    ["persuasion","insight","perception","deception"],
     ranger:  ["perception","stealth","survival","athletics"],
     wizard:  ["arcana","investigation","history","insight"],
   };
+  
   return byClass[classKey] || byObjective[objective] || ["perception","insight","athletics"];
 }
 
+/**
+ * Evaluate a character build snapshot with comprehensive metrics
+ * Returns score and detailed breakdown of performance
+ */
 function evaluateBuildSnapshot(snapshot, assumptions, objective) {
-  const pb = proficiencyBonus(snapshot.level);
-  const primary = getPrimaryAbilityForObjective(snapshot.class, objective);
-  const primaryMod = modFromScore(snapshot.abilities[primary]);
-  const dexMod = modFromScore(snapshot.abilities.dex);
-  const conMod = modFromScore(snapshot.abilities.con);
-  const cls = getClassData(snapshot.class);
+  try {
+    const pb = proficiencyBonus(snapshot.level);
+    const primary = getPrimaryAbilityForObjective(snapshot.class, objective);
+    const primaryMod = modFromScore(snapshot.abilities[primary]);
+    const dexMod = modFromScore(snapshot.abilities.dex);
+    const conMod = modFromScore(snapshot.abilities.con);
+    const cls = getClassData(snapshot.class);
 
-  const attackBonus = pb + primaryMod + Number(assumptions.magicBonus || 0);
-  const avgDie = cls.weaponStyle === "dex" ? 4.5 : 5.5;
-  const attacks = estimateAttacksPerRound(snapshot.class, snapshot.level);
-  const hitChance = effectiveHitChance(attackBonus, assumptions.targetAC, assumptions.advantageRate);
-  const perHitDamage = avgDie + primaryMod + Number(assumptions.magicBonus || 0) + (cls.features.bonusDamagePerAttack || 0);
-  const sustainedDpr = Math.max(0, hitChance * perHitDamage * attacks);
+    // Offensive capabilities
+    const attackBonus = pb + primaryMod + validateMagicBonus(assumptions.magicBonus);
+    const avgDie = cls.weaponStyle === "dex" ? 4.5 : 5.5; // Finesse/ranged vs heavy weapons
+    const attacks = estimateAttacksPerRound(snapshot.class, snapshot.level);
+    const hitChance = effectiveHitChance(attackBonus, assumptions.targetAC, assumptions.advantageRate);
+    const bonusDamage = cls.features?.bonusDamagePerAttack || 0;
+    const perHitDamage = avgDie + primaryMod + validateMagicBonus(assumptions.magicBonus) + bonusDamage;
+    const sustainedDpr = Math.max(0, hitChance * perHitDamage * attacks);
 
-  const burstFactor = cls.features.burstUsesPerShortRest > 0 ? 1 + Math.min(0.75, assumptions.shortRests * 0.2) : 1;
-  const novaDpr = sustainedDpr * (1 + (cls.features.burstUsesPerShortRest ? 0.6 : 0)) * burstFactor + (snapshot.featPlan.includes("damage_feat") ? 1.5 : 0);
+    // Nova/burst damage
+    const hasShortRestAbilities = (cls.features?.burstUsesPerShortRest || 0) > 0;
+    const burstFactor = hasShortRestAbilities ? 1 + Math.min(0.75, assumptions.shortRests * 0.2) : 1;
+    const burstBonus = hasShortRestAbilities ? NOVA_BURST_BONUS : 0;
+    const featBonus = snapshot.featPlan?.includes("damage_feat") ? DAMAGE_FEAT_BONUS : 0;
+    const novaDpr = sustainedDpr * (1 + burstBonus) * burstFactor + featBonus;
 
-  const hp = getEstimatedHP(snapshot.level, snapshot.class, conMod);
-  const ac = getArmorClassEstimate({ ...snapshot, hasShield: objective === "tank", armorMagicBonus: assumptions.magicBonus }, dexMod);
-  const effectiveHp = hp * (1 + (ac - 15) * 0.07);
+    // Defensive capabilities
+    const hp = getEstimatedHP(snapshot.level, snapshot.class, conMod);
+    const ac = getArmorClassEstimate({ 
+      ...snapshot, 
+      hasShield: objective === "tank", 
+      armorMagicBonus: assumptions.magicBonus 
+    }, dexMod);
+    const effectiveHp = hp * (1 + (ac - 15) * AC_TO_HP_MULTIPLIER);
 
-  const casterAbility = cls.defaultCastingAbility || "int";
-  const spellDc = 8 + pb + modFromScore(snapshot.abilities[casterAbility]);
-  const spellAttack = pb + modFromScore(snapshot.abilities[casterAbility]) + Number(assumptions.magicBonus || 0);
-  const failChance = saveFailChance(spellDc, assumptions.targetSaveBonus);
-  const controlPressure = cls.spellcasting
-    ? failChance * (10 + pb * 1.2) + (modFromScore(snapshot.abilities.con) * 0.6)
-    : failChance * 2;
+    // Spellcasting metrics
+    const casterAbility = cls.defaultCastingAbility || "int";
+    const spellDc = BASE_SPELL_DC + pb + modFromScore(snapshot.abilities[casterAbility]);
+    const spellAttack = pb + modFromScore(snapshot.abilities[casterAbility]) + validateMagicBonus(assumptions.magicBonus);
+    const failChance = saveFailChance(spellDc, assumptions.targetSaveBonus);
+    const controlPressure = cls.spellcasting
+      ? failChance * (10 + pb * 1.2) + (modFromScore(snapshot.abilities.con) * 0.6)
+      : failChance * 2;
 
-  const skillKeys = getSuggestedSkills(snapshot.class, objective);
-  const skillScore = skillKeys.reduce((sum, k) => {
-    const skill = SKILLS.find(s => s.key === k);
-    if (!skill) return sum;
-    return sum + modFromScore(snapshot.abilities[skill.ability]) + pb;
-  }, 0) + (snapshot.class === "rogue" ? pb * 1.5 : 0) + (snapshot.class === "bard" ? pb : 0);
+    // Skill proficiency score
+    const skillKeys = getSuggestedSkills(snapshot.class, objective);
+    const skillScore = skillKeys.reduce((sum, k) => {
+      const skill = SKILLS.find(s => s.key === k);
+      if (!skill) return sum;
+      return sum + modFromScore(snapshot.abilities[skill.ability]) + pb;
+    }, 0) + (snapshot.class === "rogue" ? pb * 1.5 : 0) + (snapshot.class === "bard" ? pb : 0);
 
-  const concentrationScore = cls.spellcasting
-    ? (conMod + (cls.saveProficiencies.includes("con") ? pb : 0))
-    : conMod;
-  const initiative = dexMod + (snapshot.featPlan.includes("initiative_feat") ? 3 : 0);
+    // Concentration and initiative
+    const concentrationScore = cls.spellcasting
+      ? (conMod + (cls.saveProficiencies.includes("con") ? pb : 0))
+      : conMod;
+    const initiativeBonus = snapshot.featPlan?.includes("initiative_feat") ? INITIATIVE_FEAT_BONUS : 0;
+    const initiative = dexMod + initiativeBonus;
 
-  const W = {
-    sustained_dpr: { sustainedDpr:1.4, novaDpr:0.4, effectiveHp:0.35, controlPressure:0.15, skillScore:0.1, concentrationScore:0.1, initiative:0.15 },
-    nova_dpr:      { sustainedDpr:0.7, novaDpr:1.5, effectiveHp:0.2,  controlPressure:0.1,  skillScore:0.05,concentrationScore:0.05,initiative:0.2 },
-    tank:          { sustainedDpr:0.35,novaDpr:0.15, effectiveHp:1.5,  controlPressure:0.2,  skillScore:0.05,concentrationScore:0.2, initiative:0.05 },
-    controller:    { sustainedDpr:0.25,novaDpr:0.25, effectiveHp:0.25, controlPressure:1.5,  skillScore:0.15,concentrationScore:0.4, initiative:0.2 },
-    skill:         { sustainedDpr:0.25,novaDpr:0.15, effectiveHp:0.2,  controlPressure:0.2,  skillScore:1.6, concentrationScore:0.1, initiative:0.2 },
-    balanced:      { sustainedDpr:0.8, novaDpr:0.5,  effectiveHp:0.6,  controlPressure:0.6,  skillScore:0.4, concentrationScore:0.2, initiative:0.2 },
-  }[objective] || { sustainedDpr:1,novaDpr:1,effectiveHp:1,controlPressure:1,skillScore:1,concentrationScore:1,initiative:1 };
+    // Calculate weighted score based on objective
+    const W = {
+      sustained_dpr: { sustainedDpr:1.4, novaDpr:0.4, effectiveHp:0.35, controlPressure:0.15, skillScore:0.1, concentrationScore:0.1, initiative:0.15 },
+      nova_dpr:      { sustainedDpr:0.7, novaDpr:1.5, effectiveHp:0.2,  controlPressure:0.1,  skillScore:0.05,concentrationScore:0.05,initiative:0.2 },
+      tank:          { sustainedDpr:0.35,novaDpr:0.15, effectiveHp:1.5,  controlPressure:0.2,  skillScore:0.05,concentrationScore:0.2, initiative:0.05 },
+      controller:    { sustainedDpr:0.25,novaDpr:0.25, effectiveHp:0.25, controlPressure:1.5,  skillScore:0.15,concentrationScore:0.4, initiative:0.2 },
+      skill:         { sustainedDpr:0.25,novaDpr:0.15, effectiveHp:0.2,  controlPressure:0.2,  skillScore:1.6, concentrationScore:0.1, initiative:0.2 },
+      balanced:      { sustainedDpr:0.8, novaDpr:0.5,  effectiveHp:0.6,  controlPressure:0.6,  skillScore:0.4, concentrationScore:0.2, initiative:0.2 },
+    }[objective] || { sustainedDpr:1,novaDpr:1,effectiveHp:1,controlPressure:1,skillScore:1,concentrationScore:1,initiative:1 };
 
-  const score = sustainedDpr*W.sustainedDpr + novaDpr*W.novaDpr + effectiveHp*W.effectiveHp +
-    controlPressure*W.controlPressure + skillScore*W.skillScore + concentrationScore*W.concentrationScore + initiative*W.initiative;
+    const score = sustainedDpr*W.sustainedDpr + novaDpr*W.novaDpr + effectiveHp*W.effectiveHp +
+      controlPressure*W.controlPressure + skillScore*W.skillScore + concentrationScore*W.concentrationScore + initiative*W.initiative;
 
-  return { score, sustainedDpr, novaDpr, effectiveHp, ac, hp, spellDc, spellAttack, controlPressure, skillScore, concentrationScore, initiative, hitChance, primary };
-}
-
-function buildMilestonePlan(baseClass, objective, assumptions) {
-  const milestones = [1,3,5,8,11,17,20].filter(n => n <= assumptions.analysisLevel);
-  return milestones.map(level => {
-    const abilities = autoAssignPointBuy(baseClass, objective);
-    const featPlan = [];
-    const asiLevels = [4,8,12,16,19].filter(n => n <= level);
-    const primary = getPrimaryAbilityForObjective(baseClass, objective);
-    const caster = getClassData(baseClass).defaultCastingAbility;
-    asiLevels.forEach((_, idx) => {
-      if (assumptions.feats && objective === "controller" && idx === 0) {
-        featPlan.push("initiative_feat");
-      } else if (assumptions.feats && ["sustained_dpr","nova_dpr"].includes(objective) && idx === 0) {
-        featPlan.push("damage_feat");
-      } else {
-        if (abilities[primary] < 20) abilities[primary] = Math.min(20, abilities[primary]+2);
-        else if (abilities.con < 18) abilities.con = Math.min(20, abilities.con+2);
-        else if (caster && abilities[caster] < 20) abilities[caster] = Math.min(20, abilities[caster]+2);
-      }
-      if (featPlan.length && abilities[primary] < 18 && idx > 0) abilities[primary] = Math.min(20, abilities[primary]+2);
-    });
-    const snapshot = { class: baseClass, level, abilities, featPlan };
-    const metrics = evaluateBuildSnapshot(snapshot, assumptions, objective);
-    return { level, snapshot, metrics };
-  });
-}
-
-function generateCandidateBuilds(config) {
-  const { objective, assumptions, classPool } = config;
-  const pool = classPool.length ? classPool : CLASS_OPTIONS;
-  return pool.map(classKey => {
-    const plan = buildMilestonePlan(classKey, objective, assumptions);
-    const finalStep = plan[plan.length - 1] || plan[0];
-    const score = finalStep?.metrics?.score || 0;
-    const cls = getClassData(classKey);
-    const strengths = [];
-    if (finalStep.metrics.sustainedDpr >= 12) strengths.push("Strong sustained offense");
-    if (finalStep.metrics.novaDpr >= 18)      strengths.push("Strong burst potential");
-    if (finalStep.metrics.effectiveHp >= 70)  strengths.push("High durability");
-    if (finalStep.metrics.controlPressure >= 6) strengths.push("Strong control");
-    if (finalStep.metrics.skillScore >= 15)   strengths.push("High utility");
-    if (cls.tags.includes("short_rest"))       strengths.push("Short-rest efficient");
-    const tradeoffs = [];
-    if (cls.hitDie <= 6)                              tradeoffs.push("Lower durability");
-    if (!cls.spellcasting && objective === "controller") tradeoffs.push("Limited magical control");
-    if (cls.armorType === "light" && objective === "tank") tradeoffs.push("Weaker armor scaling");
-    if (cls.tags.includes("nova_dpr") && assumptions.roundsPerEncounter >= 5) tradeoffs.push("Value dips in long fights");
-    return {
-      classKey, classLabel: cls.label, score, plan, strengths, tradeoffs,
-      summary: {
-        primaryStat: finalStep.metrics.primary,
-        sustainedDpr: finalStep.metrics.sustainedDpr,
-        novaDpr: finalStep.metrics.novaDpr,
-        effectiveHp: finalStep.metrics.effectiveHp,
-        spellDc: finalStep.metrics.spellDc,
-        initiative: finalStep.metrics.initiative,
-        ac: finalStep.metrics.ac,
-      },
+    return { 
+      score, sustainedDpr, novaDpr, effectiveHp, ac, hp, 
+      spellDc, spellAttack, controlPressure, skillScore, 
+      concentrationScore, initiative, hitChance, primary 
     };
-  }).sort((a, b) => b.score - a.score);
+  } catch (error) {
+    console.error("Error evaluating build snapshot:", error, snapshot);
+    // Return safe defaults
+    return {
+      score: 0, sustainedDpr: 0, novaDpr: 0, effectiveHp: 30, ac: 10, hp: 30,
+      spellDc: 10, spellAttack: 0, controlPressure: 0, skillScore: 0,
+      concentrationScore: 0, initiative: 0, hitChance: 0.5, primary: "str"
+    };
+  }
+}
+
+/**
+ * Build a milestone progression plan showing character growth
+ * Returns array of level snapshots with metrics
+ */
+function buildMilestonePlan(baseClass, objective, assumptions) {
+  try {
+    const analysisLevel = validateLevel(assumptions.analysisLevel);
+    const milestones = MILESTONE_LEVELS.filter(n => n <= analysisLevel);
+    
+    return milestones.map(level => {
+      const abilities = autoAssignPointBuy(baseClass, objective);
+      const featPlan = [];
+      const asiLevels = ASI_LEVELS.filter(n => n <= level);
+      const primary = getPrimaryAbilityForObjective(baseClass, objective);
+      const caster = getClassData(baseClass).defaultCastingAbility;
+      
+      // Simulate ASI/feat choices
+      asiLevels.forEach((_, idx) => {
+        const canTakeFeat = assumptions.feats;
+        const preferInitiative = canTakeFeat && objective === "controller" && idx === 0;
+        const preferDamage = canTakeFeat && ["sustained_dpr","nova_dpr"].includes(objective) && idx === 0;
+        
+        if (preferInitiative) {
+          featPlan.push("initiative_feat");
+        } else if (preferDamage) {
+          featPlan.push("damage_feat");
+        } else {
+          // Take ASI to boost primary, then con, then caster stat
+          if (abilities[primary] < ABILITY_SCORE_MAX) {
+            abilities[primary] = Math.min(ABILITY_SCORE_MAX, abilities[primary] + 2);
+          } else if (abilities.con < 18) {
+            abilities.con = Math.min(ABILITY_SCORE_MAX, abilities.con + 2);
+          } else if (caster && abilities[caster] < ABILITY_SCORE_MAX) {
+            abilities[caster] = Math.min(ABILITY_SCORE_MAX, abilities[caster] + 2);
+          }
+        }
+        
+        // Allow catching up primary stat after taking a feat
+        if (featPlan.length && abilities[primary] < 18 && idx > 0) {
+          abilities[primary] = Math.min(ABILITY_SCORE_MAX, abilities[primary] + 2);
+        }
+      });
+      
+      const snapshot = { class: baseClass, level, abilities, featPlan };
+      const metrics = evaluateBuildSnapshot(snapshot, assumptions, objective);
+      return { level, snapshot, metrics };
+    });
+  } catch (error) {
+    console.error("Error building milestone plan:", error);
+    return [];
+  }
+}
+
+/**
+ * Generate optimized candidate builds for all classes
+ * Returns sorted array of build recommendations
+ */
+function generateCandidateBuilds(config) {
+  try {
+    const { objective, assumptions, classPool } = config;
+    const pool = classPool && classPool.length ? classPool : CLASS_OPTIONS;
+    
+    const results = pool.map(classKey => {
+      try {
+        const plan = buildMilestonePlan(classKey, objective, assumptions);
+        if (!plan || plan.length === 0) return null;
+        
+        const finalStep = plan[plan.length - 1] || plan[0];
+        if (!finalStep || !finalStep.metrics) return null;
+        
+        const score = finalStep.metrics.score || 0;
+        const cls = getClassData(classKey);
+        
+        // Identify strengths
+        const strengths = [];
+        if (finalStep.metrics.sustainedDpr >= 12) strengths.push("Strong sustained offense");
+        if (finalStep.metrics.novaDpr >= 18)      strengths.push("Strong burst potential");
+        if (finalStep.metrics.effectiveHp >= 70)  strengths.push("High durability");
+        if (finalStep.metrics.controlPressure >= 6) strengths.push("Strong control");
+        if (finalStep.metrics.skillScore >= 15)   strengths.push("High utility");
+        if (cls.tags.includes("short_rest"))       strengths.push("Short-rest efficient");
+        
+        // Identify tradeoffs
+        const tradeoffs = [];
+        if (cls.hitDie <= 6) tradeoffs.push("Lower durability");
+        if (!cls.spellcasting && objective === "controller") tradeoffs.push("Limited magical control");
+        if (cls.armorType === "light" && objective === "tank") tradeoffs.push("Weaker armor scaling");
+        if (cls.tags.includes("nova_dpr") && assumptions.roundsPerEncounter >= 5) {
+          tradeoffs.push("Value dips in long fights");
+        }
+        
+        return {
+          classKey, 
+          classLabel: cls.label, 
+          score, 
+          plan, 
+          strengths, 
+          tradeoffs,
+          summary: {
+            primaryStat: finalStep.metrics.primary,
+            sustainedDpr: finalStep.metrics.sustainedDpr,
+            novaDpr: finalStep.metrics.novaDpr,
+            effectiveHp: finalStep.metrics.effectiveHp,
+            spellDc: finalStep.metrics.spellDc,
+            initiative: finalStep.metrics.initiative,
+            ac: finalStep.metrics.ac,
+          },
+        };
+      } catch (error) {
+        console.error(`Error generating build for ${classKey}:`, error);
+        return null;
+      }
+    });
+    
+    // Filter out failed builds and sort by score
+    return results.filter(r => r !== null).sort((a, b) => b.score - a.score);
+  } catch (error) {
+    console.error("Error generating candidate builds:", error);
+    return [];
+  }
 }
 
 // =========================================================
-// 4. State Model
+// 5. State Model
 // =========================================================
+
+/**
+ * Generate a unique ID with crypto fallback
+ */
 function safeId() {
-  try { return crypto.randomUUID(); } catch { return Math.random().toString(36).slice(2) + Date.now().toString(36); }
+  try { 
+    return crypto.randomUUID(); 
+  } catch { 
+    return Math.random().toString(36).slice(2) + Date.now().toString(36); 
+  }
 }
 
+/**
+ * Create a default character state object
+ */
 function createDefaultCharacter() {
   return {
     identity: { name: "", player: "", subclass: "", race: "Human", background: "Soldier", alignment: "True Neutral" },
@@ -361,63 +722,189 @@ function createDefaultCharacter() {
   };
 }
 
+/**
+ * Hydrate and validate character data from storage or import
+ * Ensures all required fields exist with valid values
+ */
 function hydrateCharacter(raw) {
   const def = createDefaultCharacter();
   if (!raw || typeof raw !== "object") return def;
-  return {
-    ...def, ...raw,
-    identity: { ...def.identity, ...(raw.identity || {}) },
-    abilities: { ...def.abilities, ...(raw.abilities || {}) },
-    skills: (raw.skills && typeof raw.skills === "object") ? { ...def.skills, ...raw.skills } : def.skills,
-    weapons: Array.isArray(raw.weapons) ? raw.weapons.map(w => ({ id: safeId(), name: "", ability: "str", proficient: true, magicBonus: 0, damage: "1d8+MOD", ...w })) : def.weapons,
-    spellcasting: {
-      ...def.spellcasting, ...(raw.spellcasting || {}),
-      slots: { ...DEFAULT_SPELL_SLOTS(), ...((raw.spellcasting || {}).slots || {}) },
-    },
-    equipment: Array.isArray(raw.equipment) ? raw.equipment : def.equipment,
-    optimizer: {
-      ...def.optimizer, ...(raw.optimizer || {}),
-      assumptions: { ...def.optimizer.assumptions, ...((raw.optimizer || {}).assumptions || {}) },
-      results: [],
-    },
-  };
+  
+  try {
+    // Validate and merge identity
+    const identity = { ...def.identity };
+    if (raw.identity && typeof raw.identity === "object") {
+      Object.assign(identity, raw.identity);
+    }
+    
+    // Validate class and level
+    const characterClass = validateClassKey(raw.class);
+    const level = validateLevel(raw.level);
+    const abilityMode = ["standard", "pointbuy", "manual"].includes(raw.abilityMode) 
+      ? raw.abilityMode 
+      : "standard";
+    
+    // Validate abilities
+    const abilities = { ...def.abilities };
+    if (raw.abilities && typeof raw.abilities === "object") {
+      ABILITIES.forEach(ab => {
+        if (raw.abilities[ab] !== undefined) {
+          abilities[ab] = validateAbilityScore(raw.abilities[ab], abilityMode);
+        }
+      });
+    }
+    
+    // Validate skills
+    const skills = { ...def.skills };
+    if (raw.skills && typeof raw.skills === "object") {
+      Object.keys(raw.skills).forEach(key => {
+        if (skills[key] && typeof raw.skills[key] === "object") {
+          skills[key] = {
+            proficient: Boolean(raw.skills[key].proficient),
+            expertise: Boolean(raw.skills[key].expertise)
+          };
+        }
+      });
+    }
+    
+    // Validate weapons
+    let weapons = def.weapons;
+    if (Array.isArray(raw.weapons) && raw.weapons.length > 0) {
+      weapons = raw.weapons.map(w => ({
+        id: w.id || safeId(),
+        name: String(w.name || ""),
+        ability: validateAbilityKey(w.ability),
+        proficient: Boolean(w.proficient),
+        magicBonus: validateMagicBonus(w.magicBonus),
+        damage: String(w.damage || "1d8+MOD")
+      }));
+    }
+    
+    // Validate spellcasting
+    const spellcasting = { ...def.spellcasting };
+    if (raw.spellcasting && typeof raw.spellcasting === "object") {
+      if (raw.spellcasting.castingAbility) {
+        spellcasting.castingAbility = validateAbilityKey(raw.spellcasting.castingAbility);
+      }
+      if (raw.spellcasting.slots && typeof raw.spellcasting.slots === "object") {
+        for (let i = 1; i <= MAX_SPELL_LEVEL; i++) {
+          spellcasting.slots[i] = validateSpellSlot(raw.spellcasting.slots[i]);
+        }
+      }
+      spellcasting.knownSpells = String(raw.spellcasting.knownSpells || "");
+      spellcasting.preparedSpells = String(raw.spellcasting.preparedSpells || "");
+    }
+    
+    // Validate equipment
+    let equipment = def.equipment;
+    if (Array.isArray(raw.equipment)) {
+      equipment = raw.equipment.filter(e => typeof e === "string" && e.trim());
+    }
+    
+    // Validate optimizer settings
+    const optimizer = { ...def.optimizer };
+    if (raw.optimizer && typeof raw.optimizer === "object") {
+      const validObjective = OPTIMIZER_OBJECTIVES.find(o => o.key === raw.optimizer.objective);
+      if (validObjective) optimizer.objective = validObjective.key;
+      
+      if (RULE_PRESETS[raw.optimizer.rulePreset]) {
+        optimizer.rulePreset = raw.optimizer.rulePreset;
+      }
+      
+      if (raw.optimizer.assumptions && typeof raw.optimizer.assumptions === "object") {
+        optimizer.assumptions = { ...def.optimizer.assumptions, ...raw.optimizer.assumptions };
+        optimizer.assumptions.analysisLevel = validateLevel(optimizer.assumptions.analysisLevel);
+      }
+    }
+    
+    return {
+      identity,
+      class: characterClass,
+      level,
+      abilityMode,
+      abilities,
+      skills,
+      weapons,
+      spellcasting,
+      features: String(raw.features || ""),
+      traits: String(raw.traits || ""),
+      notes: String(raw.notes || ""),
+      equipment,
+      hasShield: Boolean(raw.hasShield),
+      armorMagicBonus: validateMagicBonus(raw.armorMagicBonus),
+      optimizer,
+    };
+  } catch (error) {
+    console.error("Error hydrating character:", error);
+    setStatus("⚠ Character data partially corrupted, using defaults", true);
+    return def;
+  }
 }
 
 // =========================================================
-// 5. Persistence
+// 6. Persistence (with error handling)
 // =========================================================
+
 let _saveTimer = null;
+
+/**
+ * Schedule a delayed save to localStorage
+ * Debounced to avoid excessive writes
+ */
 function scheduleSave() {
   clearTimeout(_saveTimer);
   _saveTimer = setTimeout(() => {
-    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); }
-    catch (e) { setStatus("⚠ Save failed: " + e.message, true); }
+    try { 
+      const json = JSON.stringify(state);
+      localStorage.setItem(STORAGE_KEY, json);
+    } catch (e) { 
+      console.error("Save failed:", e);
+      setStatus("⚠ Save failed: " + e.message, true); 
+    }
   }, 400);
 }
 
+/**
+ * Load character from localStorage with error handling
+ */
 function loadFromStorage() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    if (raw) return hydrateCharacter(JSON.parse(raw));
-  } catch {}
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      return hydrateCharacter(parsed);
+    }
+  } catch (error) {
+    console.error("Load failed:", error);
+    setStatus("⚠ Could not load saved character", true);
+  }
   return createDefaultCharacter();
 }
 
 // =========================================================
-// 6. App State
+// 7. App State
 // =========================================================
 let state = loadFromStorage();
 
+/**
+ * Update status bar with message
+ */
 function setStatus(msg, warn) {
   const el = document.getElementById("status-msg");
-  if (el) { el.textContent = msg; el.style.color = warn ? "#f85149" : ""; }
+  if (el) { 
+    el.textContent = msg; 
+    el.style.color = warn ? "#f85149" : ""; 
+  }
 }
 
 // =========================================================
-// 7. DOM Helpers
+// 8. DOM Helpers
 // =========================================================
 function qs(sel) { return document.querySelector(sel); }
 
+/**
+ * Populate a select element with options
+ */
 function populateSelect(id, options, current) {
   const sel = document.getElementById(id);
   if (!sel) return;
@@ -435,7 +922,7 @@ function fmtMod(n) { return n >= 0 ? "+" + n : String(n); }
 function fmtFixed(n, d=1) { return Number(n).toFixed(d); }
 
 // =========================================================
-// 8. Render Functions
+// 9. Render Functions
 // =========================================================
 
 // --- Identity ---
@@ -466,7 +953,7 @@ function renderAbilities() {
     const tr = document.createElement("tr");
     tr.innerHTML = `
       <td>${ABILITY_LABELS[ab]}</td>
-      <td><input type="number" min="${state.abilityMode === 'pointbuy' ? 8 : 3}" max="${state.abilityMode === 'pointbuy' ? 15 : 20}" value="${score}" data-ab="${ab}"></td>
+      <td><input type="number" min="${state.abilityMode === 'pointbuy' ? POINT_BUY_MIN_SCORE : ABILITY_SCORE_MIN}" max="${state.abilityMode === 'pointbuy' ? POINT_BUY_MAX_SCORE : ABILITY_SCORE_MAX}" value="${score}" data-ab="${ab}"></td>
       <td class="mod-cell">${fmtMod(mod)}</td>
       <td class="save-cell ${saveProf ? "save-prof" : ""}">${fmtMod(saveMod)}${saveProf ? " ●" : ""}</td>
     `;
@@ -477,16 +964,12 @@ function renderAbilities() {
   const pbInfo = document.getElementById("pb-info");
   if (state.abilityMode === "pointbuy") {
     const spent = ABILITIES.reduce((s, a) => s + pointBuyCost(state.abilities[a]), 0);
-    const rem = 27 - spent;
-    pbInfo.textContent = `Point Buy: ${spent}/27 spent — ${rem >= 0 ? rem + " remaining" : Math.abs(rem) + " over budget"}`;
-    pbInfo.className = "pb-info" + (rem < 0 ? " over" : "");
-    pbInfo.classList.remove("hidden");
+    const rem = POINT_BUY_MAX_POINTS - spent;
+    pbInfo.textContent = `Points: ${spent} / ${POINT_BUY_MAX_POINTS}  (${rem} remaining)`;
+    pbInfo.className = spent > POINT_BUY_MAX_POINTS ? "pb-info over" : "pb-info";
   } else {
     pbInfo.className = "pb-info hidden";
   }
-
-  // set ability mode selector
-  document.getElementById("f-ability-mode").value = state.abilityMode;
 }
 
 // --- Derived stats ---
@@ -494,29 +977,26 @@ function renderDerived() {
   const pb = proficiencyBonus(state.level);
   const mods = {};
   ABILITIES.forEach(a => mods[a] = modFromScore(state.abilities[a]));
+  const cls = getClassData(state.class);
   const hp = getEstimatedHP(state.level, state.class, mods.con);
   const ac = getArmorClassEstimate(state, mods.dex);
-  const castAb = getCasterAbility(state);
-  const spellAtk = pb + mods[castAb];
-  const spellDc = 8 + pb + mods[castAb];
-  const pp = 10 + mods.wis + (state.skills.perception?.proficient ? pb : 0) + (state.skills.perception?.expertise ? pb : 0);
+  const spellDc = BASE_SPELL_DC + pb + mods[getCasterAbility(state)];
+  const spellAtk = pb + mods[getCasterAbility(state)];
+  const pp = BASE_AC + mods.wis; // Passive Perception
 
-  const container = document.getElementById("derived-stats");
-  if (!container) return;
-  const chips = [
+  const grid = document.getElementById("derived-stats");
+  if (!grid) return;
+  const items = [
     ["HP", hp],
     ["AC", ac],
     ["Prof", fmtMod(pb)],
-    ["Init", fmtMod(mods.dex)],
-    ["Spell Atk", fmtMod(spellAtk)],
-    ["Spell DC", spellDc],
-    ["Pass Perc", pp],
+    ["PP", pp],
   ];
-  container.innerHTML = chips.map(([lbl, val]) =>
-    `<div class="derived-chip"><span class="dval">${val}</span><span class="dlbl">${lbl}</span></div>`
+  grid.innerHTML = items.map(([lbl, val]) =>
+    `<div class="derived-chip"><div class="dval">${val}</div><div class="dlbl">${lbl}</div></div>`
   ).join("");
 
-  // statusbar
+  // Update status bar
   document.getElementById("status-pb").textContent = `PB: ${fmtMod(pb)}`;
   document.getElementById("status-pp").textContent = `PP: ${pp}`;
   document.getElementById("status-init").textContent = `Init: ${fmtMod(mods.dex)}`;
@@ -567,7 +1047,7 @@ function renderWeapons() {
       <td><input type="text" value="${escHtml(w.name)}" data-wfield="name"></td>
       <td><select data-wfield="ability">${ABILITIES.map(a => `<option value="${a}" ${w.ability===a?"selected":""}>${a.toUpperCase()}</option>`).join("")}</select></td>
       <td><input type="text" value="${escHtml(w.damage)}" data-wfield="damage" style="width:5rem"></td>
-      <td><input type="number" min="0" max="5" value="${w.magicBonus}" data-wfield="magicBonus" style="width:2.8rem"></td>
+      <td><input type="number" min="0" max="${MAX_MAGIC_BONUS}" value="${w.magicBonus}" data-wfield="magicBonus" style="width:2.8rem"></td>
       <td><input type="checkbox" ${w.proficient?"checked":""} data-wfield="proficient"></td>
       <td>${fmtMod(atk)}</td>
       <td>${avg}</td>
@@ -584,7 +1064,7 @@ function renderSpellSlots() {
   if (!headRow || !bodyRow) return;
   headRow.innerHTML = "";
   bodyRow.innerHTML = "";
-  for (let lvl = 1; lvl <= 9; lvl++) {
+  for (let lvl = 1; lvl <= MAX_SPELL_LEVEL; lvl++) {
     const th = document.createElement("th");
     th.textContent = lvl;
     headRow.appendChild(th);
@@ -611,7 +1091,7 @@ const ASSUMPTION_FIELDS = [
   { key: "targetAC",          label: "Target AC",        type: "number", min: 10, max: 25 },
   { key: "targetSaveBonus",   label: "Target Save",      type: "number", min: 0,  max: 12 },
   { key: "advantageRate",     label: "Adv Rate (0–1)",   type: "number", min: 0,  max: 1, step: 0.05 },
-  { key: "magicBonus",        label: "Magic Bonus",      type: "number", min: 0,  max: 3 },
+  { key: "magicBonus",        label: "Magic Bonus",      type: "number", min: 0,  max: MAX_MAGIC_BONUS },
   { key: "shortRests",        label: "Short Rests/Day",  type: "number", min: 0,  max: 6 },
   { key: "roundsPerEncounter",label: "Rounds/Encounter", type: "number", min: 1,  max: 10 },
   { key: "encountersPerDay",  label: "Enc/Day",          type: "number", min: 1,  max: 8 },
@@ -641,23 +1121,28 @@ function renderOptimizer() {
 
 // --- Current build metrics ---
 function renderMetrics() {
-  const snapshot = { class: state.class, level: Number(state.level), abilities: state.abilities, featPlan: [] };
-  const metrics = evaluateBuildSnapshot(snapshot, state.optimizer.assumptions, state.optimizer.objective);
-  const grid = document.getElementById("metrics-grid");
-  if (!grid) return;
-  const items = [
-    ["Sust DPR", fmtFixed(metrics.sustainedDpr)],
-    ["Nova DPR", fmtFixed(metrics.novaDpr)],
-    ["Eff HP",   Math.round(metrics.effectiveHp)],
-    ["AC",       metrics.ac],
-    ["Spell DC", metrics.spellDc],
-    ["Control",  fmtFixed(metrics.controlPressure)],
-    ["Skills",   fmtFixed(metrics.skillScore)],
-    ["Score",    fmtFixed(metrics.score)],
-  ];
-  grid.innerHTML = items.map(([lbl, val]) =>
-    `<div class="metric-chip"><div class="mval">${val}</div><div class="mlbl">${lbl}</div></div>`
-  ).join("");
+  try {
+    const snapshot = { class: state.class, level: Number(state.level), abilities: state.abilities, featPlan: [] };
+    const metrics = evaluateBuildSnapshot(snapshot, state.optimizer.assumptions, state.optimizer.objective);
+    const grid = document.getElementById("metrics-grid");
+    if (!grid) return;
+    const items = [
+      ["Sust DPR", fmtFixed(metrics.sustainedDpr)],
+      ["Nova DPR", fmtFixed(metrics.novaDpr)],
+      ["Eff HP",   Math.round(metrics.effectiveHp)],
+      ["AC",       metrics.ac],
+      ["Spell DC", metrics.spellDc],
+      ["Control",  fmtFixed(metrics.controlPressure)],
+      ["Skills",   fmtFixed(metrics.skillScore)],
+      ["Score",    fmtFixed(metrics.score)],
+    ];
+    grid.innerHTML = items.map(([lbl, val]) =>
+      `<div class="metric-chip"><div class="mval">${val}</div><div class="mlbl">${lbl}</div></div>`
+    ).join("");
+  } catch (error) {
+    console.error("Error rendering metrics:", error);
+    setStatus("⚠ Error calculating metrics", true);
+  }
 }
 
 // --- Optimizer results ---
@@ -720,7 +1205,7 @@ function render() {
 }
 
 // =========================================================
-// 9. Event Wiring
+// 10. Event Wiring
 // =========================================================
 function wireEvents() {
   // Identity text inputs
@@ -728,12 +1213,13 @@ function wireEvents() {
   document.getElementById("f-player").addEventListener("input", e => { state.identity.player = e.target.value; scheduleSave(); });
   document.getElementById("f-subclass").addEventListener("input", e => { state.identity.subclass = e.target.value; scheduleSave(); });
   document.getElementById("f-level").addEventListener("change", e => {
-    state.level = clamp(Number(e.target.value) || 1, 1, 20);
+    state.level = validateLevel(e.target.value);
+    e.target.value = state.level; // Update display with validated value
     renderAbilities(); renderDerived(); renderSkills(); renderWeapons(); renderMetrics();
     scheduleSave();
   });
   document.getElementById("f-class").addEventListener("change", e => {
-    state.class = e.target.value;
+    state.class = validateClassKey(e.target.value);
     // auto-update casting ability to class default
     const def = getClassData(state.class).defaultCastingAbility;
     if (def) state.spellcasting.castingAbility = def;
@@ -754,10 +1240,8 @@ function wireEvents() {
   document.getElementById("ability-tbody").addEventListener("change", e => {
     const ab = e.target.dataset.ab;
     if (!ab) return;
-    const min = state.abilityMode === "pointbuy" ? 8 : 3;
-    const max = state.abilityMode === "pointbuy" ? 15 : 20;
-    state.abilities[ab] = clamp(Number(e.target.value) || 8, min, max);
-    e.target.value = state.abilities[ab];
+    state.abilities[ab] = validateAbilityScore(e.target.value, state.abilityMode);
+    e.target.value = state.abilities[ab]; // Update display with validated value
     renderAbilities(); renderDerived(); renderSkills(); renderWeapons(); renderMetrics();
     scheduleSave();
   });
@@ -773,12 +1257,17 @@ function wireEvents() {
 
   // Auto point buy
   document.getElementById("btn-auto-pb").addEventListener("click", () => {
-    const scores = autoAssignPointBuy(state.class, state.optimizer.objective);
-    Object.assign(state.abilities, scores);
-    state.abilityMode = "pointbuy";
-    renderAbilities(); renderDerived(); renderSkills(); renderWeapons(); renderMetrics();
-    setStatus("Auto Point Buy applied.");
-    scheduleSave();
+    try {
+      const scores = autoAssignPointBuy(state.class, state.optimizer.objective);
+      Object.assign(state.abilities, scores);
+      state.abilityMode = "pointbuy";
+      renderAbilities(); renderDerived(); renderSkills(); renderWeapons(); renderMetrics();
+      setStatus("Auto Point Buy applied.");
+      scheduleSave();
+    } catch (error) {
+      console.error("Auto point buy failed:", error);
+      setStatus("⚠ Auto point buy failed", true);
+    }
   });
 
   // Skills - delegate
@@ -814,7 +1303,11 @@ function wireEvents() {
     const w = state.weapons.find(x => x.id === wid);
     if (!w) return;
     if (field === "proficient") w[field] = e.target.checked;
-    else if (field === "magicBonus") w[field] = Number(e.target.value) || 0;
+    else if (field === "magicBonus") {
+      w[field] = validateMagicBonus(e.target.value);
+      e.target.value = w[field];
+    }
+    else if (field === "ability") w[field] = validateAbilityKey(e.target.value);
     else w[field] = e.target.value;
     renderWeapons(); scheduleSave();
   });
@@ -830,11 +1323,15 @@ function wireEvents() {
   // Spell slots
   document.getElementById("slots-body-row").addEventListener("change", e => {
     const slot = e.target.dataset.slot;
-    if (slot) { state.spellcasting.slots[slot] = Number(e.target.value) || 0; scheduleSave(); }
+    if (slot) { 
+      state.spellcasting.slots[slot] = validateSpellSlot(e.target.value);
+      e.target.value = state.spellcasting.slots[slot];
+      scheduleSave(); 
+    }
   });
 
   document.getElementById("f-cast-ability").addEventListener("change", e => {
-    state.spellcasting.castingAbility = e.target.value;
+    state.spellcasting.castingAbility = validateAbilityKey(e.target.value);
     renderDerived(); renderMetrics(); scheduleSave();
   });
 
@@ -844,7 +1341,8 @@ function wireEvents() {
   });
 
   document.getElementById("f-armor-bonus").addEventListener("change", e => {
-    state.armorMagicBonus = Number(e.target.value) || 0;
+    state.armorMagicBonus = validateMagicBonus(e.target.value);
+    e.target.value = state.armorMagicBonus;
     renderDerived(); renderMetrics(); scheduleSave();
   });
 
@@ -882,7 +1380,8 @@ function wireEvents() {
     }
   });
   document.getElementById("f-analysis-level").addEventListener("change", e => {
-    state.optimizer.assumptions.analysisLevel = clamp(Number(e.target.value) || 8, 1, 20);
+    state.optimizer.assumptions.analysisLevel = validateLevel(e.target.value);
+    e.target.value = state.optimizer.assumptions.analysisLevel;
     scheduleSave();
   });
 
@@ -897,24 +1396,38 @@ function wireEvents() {
 
   // Toolbar buttons
   document.getElementById("btn-optimize").addEventListener("click", () => {
-    setStatus("Generating builds…");
-    const results = generateCandidateBuilds({
-      objective: state.optimizer.objective,
-      assumptions: state.optimizer.assumptions,
-      classPool: [],
-    }).slice(0, 5);
-    state.optimizer.results = results;
-    renderResults(); renderMetrics(); scheduleSave();
-    setStatus(`Top ${results.length} builds generated.`);
+    try {
+      setStatus("Generating builds…");
+      const results = generateCandidateBuilds({
+        objective: state.optimizer.objective,
+        assumptions: state.optimizer.assumptions,
+        classPool: [],
+      }).slice(0, 5);
+      state.optimizer.results = results;
+      renderResults(); renderMetrics(); scheduleSave();
+      setStatus(`Top ${results.length} builds generated.`);
+    } catch (error) {
+      console.error("Optimization failed:", error);
+      setStatus("⚠ Optimization failed", true);
+    }
   });
 
   document.getElementById("btn-apply-top").addEventListener("click", () => applyBuildResult(0));
 
   document.getElementById("btn-export").addEventListener("click", exportJson);
   document.getElementById("btn-export2").addEventListener("click", () => {
-    navigator.clipboard.writeText(JSON.stringify(state, null, 2))
-      .then(() => setStatus("Copied to clipboard."))
-      .catch(() => { document.getElementById("f-import-text").value = JSON.stringify(state, null, 2); setStatus("Paste from text area."); });
+    try {
+      const json = JSON.stringify(state, null, 2);
+      navigator.clipboard.writeText(json)
+        .then(() => setStatus("Copied to clipboard."))
+        .catch(() => { 
+          document.getElementById("f-import-text").value = json; 
+          setStatus("Paste from text area."); 
+        });
+    } catch (error) {
+      console.error("Export failed:", error);
+      setStatus("⚠ Export failed", true);
+    }
   });
 
   document.getElementById("btn-reset").addEventListener("click", () => {
@@ -939,8 +1452,9 @@ function wireEvents() {
       document.getElementById("f-import-text").value = "";
       scheduleSave();
       setStatus("Import successful.");
-    } catch {
-      setStatus("Invalid JSON.", true);
+    } catch (error) {
+      console.error("Import failed:", error);
+      setStatus("⚠ Invalid JSON", true);
     }
   });
 
@@ -953,48 +1467,63 @@ function wireEvents() {
 }
 
 function applyBuildResult(idx) {
-  const result = (state.optimizer.results || [])[idx];
-  if (!result) { setStatus("No result at index " + idx, true); return; }
-  const finalStep = result.plan[result.plan.length - 1];
-  const suggestedSkills = getSuggestedSkills(result.classKey, state.optimizer.objective);
-  const nextSkills = DEFAULT_SKILLS_STATE();
-  suggestedSkills.forEach((k, i) => {
-    if (nextSkills[k]) {
-      nextSkills[k].proficient = true;
-      if (result.classKey === "rogue" && i < 2) nextSkills[k].expertise = true;
-    }
-  });
-  state.class = result.classKey;
-  state.level = state.optimizer.assumptions.analysisLevel;
-  state.abilityMode = "pointbuy";
-  state.abilities = { ...finalStep.snapshot.abilities };
-  state.skills = nextSkills;
-  const castAb = getClassData(result.classKey).defaultCastingAbility;
-  if (castAb) state.spellcasting.castingAbility = castAb;
-  render();
-  scheduleSave();
-  setStatus(`Applied ${result.classLabel} build.`);
-  // scroll to top
-  window.scrollTo(0, 0);
+  try {
+    const result = (state.optimizer.results || [])[idx];
+    if (!result) { setStatus("No result at index " + idx, true); return; }
+    const finalStep = result.plan[result.plan.length - 1];
+    const suggestedSkills = getSuggestedSkills(result.classKey, state.optimizer.objective);
+    const nextSkills = DEFAULT_SKILLS_STATE();
+    suggestedSkills.forEach((k, i) => {
+      if (nextSkills[k]) {
+        nextSkills[k].proficient = true;
+        if (result.classKey === "rogue" && i < 2) nextSkills[k].expertise = true;
+      }
+    });
+    state.class = result.classKey;
+    state.level = state.optimizer.assumptions.analysisLevel;
+    state.abilityMode = "pointbuy";
+    state.abilities = { ...finalStep.snapshot.abilities };
+    state.skills = nextSkills;
+    const castAb = getClassData(result.classKey).defaultCastingAbility;
+    if (castAb) state.spellcasting.castingAbility = castAb;
+    render();
+    scheduleSave();
+    setStatus(`Applied ${result.classLabel} build.`);
+    // scroll to top
+    window.scrollTo(0, 0);
+  } catch (error) {
+    console.error("Apply build failed:", error);
+    setStatus("⚠ Failed to apply build", true);
+  }
 }
 
 function exportJson() {
-  const data = JSON.stringify(state, null, 2);
-  const blob = new Blob([data], { type: "application/json" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = (state.identity.name || "character") + ".json";
-  a.click();
-  URL.revokeObjectURL(url);
-  setStatus("Exported.");
+  try {
+    const data = JSON.stringify(state, null, 2);
+    const blob = new Blob([data], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = (state.identity.name || "character") + ".json";
+    a.click();
+    URL.revokeObjectURL(url);
+    setStatus("Exported.");
+  } catch (error) {
+    console.error("Export failed:", error);
+    setStatus("⚠ Export failed", true);
+  }
 }
 
 // =========================================================
-// 10. Boot
+// 11. Boot
 // =========================================================
 document.addEventListener("DOMContentLoaded", () => {
-  render();
-  wireEvents();
-  setStatus("Loaded.");
+  try {
+    render();
+    wireEvents();
+    setStatus("Loaded.");
+  } catch (error) {
+    console.error("Initialization failed:", error);
+    setStatus("⚠ App initialization failed", true);
+  }
 });
