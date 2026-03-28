@@ -92,8 +92,12 @@ button:hover { background: #30363d; color: #f0f6fc; }
 button:active { background: #3d444e; }
 #btn-optimize { background: #1f6feb; border-color: #388bfd; color: #fff; }
 #btn-optimize:hover { background: #388bfd; }
+#btn-optimize:disabled { background: #1a3a5c; border-color: #264f78; color: #8b949e; cursor: not-allowed; }
+#btn-cancel { background: #9e6a03; border-color: #d29922; color: #fff; }
+#btn-cancel:hover { background: #d29922; }
 #btn-apply-top { background: #196127; border-color: #2ea043; color: #fff; }
 #btn-apply-top:hover { background: #2ea043; }
+#btn-apply-top:disabled { background: #132d19; border-color: #196127; color: #8b949e; cursor: not-allowed; }
 #btn-reset { background: #6e2232; border-color: #f85149; color: #fff; }
 #btn-reset:hover { background: #f85149; }
 

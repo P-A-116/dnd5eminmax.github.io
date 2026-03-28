@@ -161,6 +161,24 @@ export const OBJECTIVE_WEIGHTS_DEFAULT = {
 };
 
 // -------------------------------------------------------
+// Async optimizer execution tuning
+// -------------------------------------------------------
+/**
+ * Number of classes to process per chunk before yielding
+ * control back to the browser event loop.
+ * Smaller values → more responsive UI; larger values → slightly
+ * faster total wall time.  2 is a good balance for ~12 classes.
+ */
+export const ASYNC_CHUNK_SIZE = 2;
+
+/**
+ * Minimum milliseconds between throttled progress UI updates
+ * during the optimizer loop.  Keeps rendering overhead low
+ * while still giving visible feedback.
+ */
+export const PROGRESS_THROTTLE_MS = 100;
+
+// -------------------------------------------------------
 // Default optimizer assumption values
 // Used by validation.js defaultOptimizerAssumptions() and
 // as the baseline for rule presets.
