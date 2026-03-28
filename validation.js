@@ -217,7 +217,23 @@ export function normalizeState(raw) {
   const assumptions = {
     feats:              ra2.feats !== undefined        ? ensureBoolean(ra2.feats)        : defAss.feats,
     multiclass:         ra2.multiclass !== undefined   ? ensureBoolean(ra2.multiclass)   : defAss.multiclass,
-    magicBonus:         clampInt(ra2.magicBonus         ?? defAss.magicBonus,         0, MAX_MAGIC_BONUS),
+    // Backward-compatibility: if old magicBonus exists and new split fields do not,
+    // migrate: weaponMagicBonus ← magicBonus, armor/spellFocus ← 0.
+    weaponMagicBonus: (() => {
+      if (ra2.weaponMagicBonus !== undefined) return clampInt(ra2.weaponMagicBonus, 0, MAX_MAGIC_BONUS);
+      if (ra2.magicBonus       !== undefined) return clampInt(ra2.magicBonus, 0, MAX_MAGIC_BONUS);
+      return clampInt(defAss.weaponMagicBonus ?? 1, 0, MAX_MAGIC_BONUS);
+    })(),
+    armorMagicBonus: (() => {
+      if (ra2.armorMagicBonus  !== undefined) return clampInt(ra2.armorMagicBonus,  0, MAX_MAGIC_BONUS);
+      if (ra2.magicBonus       !== undefined) return 0; // migration: old data gets 0
+      return clampInt(defAss.armorMagicBonus ?? 1, 0, MAX_MAGIC_BONUS);
+    })(),
+    spellFocusBonus: (() => {
+      if (ra2.spellFocusBonus  !== undefined) return clampInt(ra2.spellFocusBonus,  0, MAX_MAGIC_BONUS);
+      if (ra2.magicBonus       !== undefined) return 0; // migration: old data gets 0
+      return clampInt(defAss.spellFocusBonus ?? 1, 0, MAX_MAGIC_BONUS);
+    })(),
     shortRests:         clampInt(ra2.shortRests         ?? defAss.shortRests,         0, 6),
     roundsPerEncounter: clampInt(ra2.roundsPerEncounter ?? defAss.roundsPerEncounter, 1, 10),
     encountersPerDay:   clampInt(ra2.encountersPerDay   ?? defAss.encountersPerDay,   1, 8),
@@ -361,6 +377,12 @@ export function validateState(state) {
   const al = ass.analysisLevel;
   if (al !== undefined && (isNaN(Number(al)) || Number(al) < MIN_LEVEL || Number(al) > MAX_LEVEL)) {
     issue("optimizer.assumptions.analysisLevel", `Analysis level "${al}" is outside the valid range [${MIN_LEVEL}–${MAX_LEVEL}].`, "warning");
+  }
+  for (const key of ["weaponMagicBonus", "armorMagicBonus", "spellFocusBonus"]) {
+    const v = ass[key];
+    if (v !== undefined && (isNaN(Number(v)) || Number(v) < 0 || Number(v) > MAX_MAGIC_BONUS)) {
+      issue(`optimizer.assumptions.${key}`, `"${key}" (${v}) is outside [0–${MAX_MAGIC_BONUS}].`, "warning");
+    }
   }
 
   return {
