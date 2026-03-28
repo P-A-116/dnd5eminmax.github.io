@@ -444,3 +444,17 @@ td select { width: 5.5rem; }
 ::-webkit-scrollbar-track { background: #0d1117; }
 ::-webkit-scrollbar-thumb { background: #30363d; border-radius: 3px; }
 ::-webkit-scrollbar-thumb:hover { background: #484f58; }
+.vp-issue.info    { border-color: #388bfd; color: #79c0ff; }
+.vp-badge-runtime {
+  display: inline-block;
+  font-size: 0.6rem;
+  font-weight: 700;
+  padding: 0 0.3em;
+  border-radius: 2px;
+  background: #1f6feb;
+  color: #e6edf3;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  vertical-align: middle;
+  margin-right: 0.25em;
+}
