@@ -363,6 +363,49 @@ td select { width: 5.5rem; }
 /* ===== IO section ===== */
 .io-btns { display: flex; gap: 0.4rem; margin-top: 0.3rem; }
 
+/* ===== Validation diagnostics panel ===== */
+#validation-panel {
+  background: #161b22;
+  border-bottom: 1px solid #30363d;
+  padding: 0.25rem 0.75rem;
+  font-size: 0.72rem;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+}
+#validation-panel.vp-has-errors { border-bottom-color: #f85149; background: #1a0c0d; }
+#validation-panel.vp-has-warnings { border-bottom-color: #d29922; background: #1a1300; }
+.vp-summary { flex: 1; font-weight: 700; }
+.vp-summary.vp-error-label   { color: #f85149; }
+.vp-summary.vp-warning-label { color: #e3b341; }
+.vp-toggle {
+  background: none;
+  border: 1px solid #30363d;
+  border-radius: 3px;
+  color: #8b949e;
+  font-size: 0.68rem;
+  padding: 0.1rem 0.4rem;
+  cursor: pointer;
+}
+.vp-toggle:hover { background: #21262d; color: #c9d1d9; }
+.vp-details {
+  width: 100%;
+  margin-top: 0.2rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+.vp-issue {
+  font-size: 0.68rem;
+  padding: 0.1rem 0.35rem;
+  border-radius: 2px;
+  border: 1px solid #30363d;
+  background: #0d1117;
+}
+.vp-issue.error   { border-color: #f85149; color: #ffa198; }
+.vp-issue.warning { border-color: #d29922; color: #e3b341; }
+
 /* ===== Scrollbar ===== */
 ::-webkit-scrollbar { width: 6px; height: 6px; }
 ::-webkit-scrollbar-track { background: #0d1117; }

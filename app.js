@@ -8,13 +8,15 @@
 import {
   ABILITIES, CLASSES,
   POINT_BUY_MAX_POINTS, POINT_BUY_MIN_SCORE, POINT_BUY_MAX_SCORE,
-  MAX_MAGIC_BONUS,
+  MAX_MAGIC_BONUS, BASE_AC,
   clamp, validateLevel, validateMagicBonus, validateClassKey, validateAbilityKey,
   modFromScore, proficiencyBonus, pointBuyCost,
   getClassData, getEstimatedHP, getArmorClassEstimate, getCasterAbility,
   estimateAttacksPerRound, effectiveHitChance, saveFailChance,
   weaponAtkBonus, weaponAvgDamage,
 } from "./dnd-engine.js";
+
+import { normalizeState, validateState } from "./validation.js";
 
 // =========================================================
 // CONSTANTS - App-specific magic numbers
@@ -498,117 +500,23 @@ function createDefaultCharacter() {
 }
 
 /**
- * Hydrate and validate character data from storage or import
- * Ensures all required fields exist with valid values
+ * Hydrate and validate character data from storage or import.
+ * Delegates to normalizeState() for canonical normalization, then ensures
+ * app-specific defaults (e.g. default weapon) are in place.
  */
 function hydrateCharacter(raw) {
   const def = createDefaultCharacter();
-  if (!raw || typeof raw !== "object") return def;
-  
   try {
-    // Validate and merge identity
-    const identity = { ...def.identity };
-    if (raw.identity && typeof raw.identity === "object") {
-      Object.assign(identity, raw.identity);
+    const normalized = normalizeState(raw);
+    // App-specific default: ensure at least one weapon exists
+    if (normalized.weapons.length === 0) {
+      normalized.weapons = def.weapons;
     }
-    
-    // Validate class and level
-    const characterClass = validateClassKey(raw.class);
-    const level = validateLevel(raw.level);
-    const abilityMode = ["standard", "pointbuy", "manual"].includes(raw.abilityMode) 
-      ? raw.abilityMode 
-      : "standard";
-    
-    // Validate abilities
-    const abilities = { ...def.abilities };
-    if (raw.abilities && typeof raw.abilities === "object") {
-      ABILITIES.forEach(ab => {
-        if (raw.abilities[ab] !== undefined) {
-          abilities[ab] = validateAbilityScore(raw.abilities[ab], abilityMode);
-        }
-      });
+    // Preserve existing optimizer results (normalizeState clears them)
+    if (raw && raw.optimizer && Array.isArray(raw.optimizer.results)) {
+      normalized.optimizer.results = raw.optimizer.results;
     }
-    
-    // Validate skills
-    const skills = { ...def.skills };
-    if (raw.skills && typeof raw.skills === "object") {
-      Object.keys(raw.skills).forEach(key => {
-        if (skills[key] && typeof raw.skills[key] === "object") {
-          skills[key] = {
-            proficient: Boolean(raw.skills[key].proficient),
-            expertise: Boolean(raw.skills[key].expertise)
-          };
-        }
-      });
-    }
-    
-    // Validate weapons
-    let weapons = def.weapons;
-    if (Array.isArray(raw.weapons) && raw.weapons.length > 0) {
-      weapons = raw.weapons.map(w => ({
-        id: w.id || safeId(),
-        name: String(w.name || ""),
-        ability: validateAbilityKey(w.ability),
-        proficient: Boolean(w.proficient),
-        magicBonus: validateMagicBonus(w.magicBonus),
-        damage: String(w.damage || "1d8+MOD")
-      }));
-    }
-    
-    // Validate spellcasting
-    const spellcasting = { ...def.spellcasting };
-    if (raw.spellcasting && typeof raw.spellcasting === "object") {
-      if (raw.spellcasting.castingAbility) {
-        spellcasting.castingAbility = validateAbilityKey(raw.spellcasting.castingAbility);
-      }
-      if (raw.spellcasting.slots && typeof raw.spellcasting.slots === "object") {
-        for (let i = 1; i <= MAX_SPELL_LEVEL; i++) {
-          spellcasting.slots[i] = validateSpellSlot(raw.spellcasting.slots[i]);
-        }
-      }
-      spellcasting.knownSpells = String(raw.spellcasting.knownSpells || "");
-      spellcasting.preparedSpells = String(raw.spellcasting.preparedSpells || "");
-    }
-    
-    // Validate equipment
-    let equipment = def.equipment;
-    if (Array.isArray(raw.equipment)) {
-      equipment = raw.equipment.filter(e => typeof e === "string" && e.trim());
-    }
-    
-    // Validate optimizer settings
-    const optimizer = { ...def.optimizer };
-    if (raw.optimizer && typeof raw.optimizer === "object") {
-      const validObjective = OPTIMIZER_OBJECTIVES.find(o => o.key === raw.optimizer.objective);
-      if (validObjective) optimizer.objective = validObjective.key;
-      
-      if (RULE_PRESETS[raw.optimizer.rulePreset]) {
-        optimizer.rulePreset = raw.optimizer.rulePreset;
-      }
-      
-      if (raw.optimizer.assumptions && typeof raw.optimizer.assumptions === "object") {
-        optimizer.assumptions = { ...def.optimizer.assumptions, ...raw.optimizer.assumptions };
-        optimizer.assumptions.analysisLevel = validateLevel(optimizer.assumptions.analysisLevel);
-      }
-    }
-    
-    return {
-      identity,
-      class: characterClass,
-      level,
-      abilityMode,
-      abilities,
-      skills,
-      weapons,
-      spellcasting,
-      features: String(raw.features || ""),
-      traits: String(raw.traits || ""),
-      notes: String(raw.notes || ""),
-      equipment,
-      hasShield: Boolean(raw.hasShield),
-      armorMagicBonus: validateMagicBonus(raw.armorMagicBonus),
-      optimizer,
-    };
+    return normalized;
   } catch (error) {
     console.error("Error hydrating character:", error);
     setStatus("⚠ Character data partially corrupted, using defaults", true);
@@ -623,18 +531,21 @@ function hydrateCharacter(raw) {
 let _saveTimer = null;
 
 /**
- * Schedule a delayed save to localStorage
- * Debounced to avoid excessive writes
+ * Schedule a delayed save to localStorage.
+ * Debounced to avoid excessive writes; normalizes before persisting.
  */
 function scheduleSave() {
   clearTimeout(_saveTimer);
   _saveTimer = setTimeout(() => {
-    try { 
-      const json = JSON.stringify(state);
+    try {
+      const normalized = normalizeState(state);
+      // Preserve optimizer results (normalizeState clears them)
+      normalized.optimizer.results = state.optimizer.results;
+      const json = JSON.stringify(normalized);
       localStorage.setItem(STORAGE_KEY, json);
-    } catch (e) { 
+    } catch (e) {
       console.error("Save failed:", e);
-      setStatus("⚠ Save failed: " + e.message, true); 
+      setStatus("⚠ Save failed: " + e.message, true);
     }
   }, 400);
 }
@@ -670,6 +581,48 @@ function setStatus(msg, warn) {
     el.textContent = msg; 
     el.style.color = warn ? "#f85149" : ""; 
   }
+}
+
+/**
+ * Show validation issues in the diagnostics panel.
+ * Pass an empty array (or nothing) to clear/hide the panel.
+ */
+function showValidationIssues(issues) {
+  const panel = document.getElementById("validation-panel");
+  if (!panel) return;
+
+  if (!issues || issues.length === 0) {
+    panel.className = "hidden";
+    panel.innerHTML = "";
+    return;
+  }
+
+  const errors   = issues.filter(i => i.severity === "error");
+  const warnings = issues.filter(i => i.severity === "warning");
+  const hasErrors = errors.length > 0;
+
+  panel.className = hasErrors ? "vp-has-errors" : "vp-has-warnings";
+
+  const summaryClass = hasErrors ? "vp-error-label" : "vp-warning-label";
+  const summaryText  = hasErrors
+    ? `⛔ ${errors.length} error(s)${warnings.length ? `, ${warnings.length} warning(s)` : ""} — some fields were corrected or defaulted.`
+    : `⚠ ${warnings.length} warning(s) — data was imported with minor corrections.`;
+
+  panel.innerHTML = `
+    <span class="vp-summary ${summaryClass}">${summaryText}</span>
+    <button class="vp-toggle" id="vp-toggle-btn" aria-expanded="false" aria-controls="vp-details">▼ Details</button>
+    <div id="vp-details" class="vp-details hidden" role="list">
+      ${issues.map(i => `<div class="vp-issue ${i.severity}" role="listitem"><strong>${escHtml(i.path)}:</strong> ${escHtml(i.message)}</div>`).join("")}
+    </div>
+  `;
+
+  document.getElementById("vp-toggle-btn").addEventListener("click", function () {
+    const det = document.getElementById("vp-details");
+    const expanded = !det.classList.contains("hidden");
+    det.classList.toggle("hidden", expanded);
+    this.setAttribute("aria-expanded", String(!expanded));
+    this.textContent = expanded ? "▼ Details" : "▲ Hide";
+  });
 }
 
 // =========================================================
@@ -1209,6 +1162,7 @@ function wireEvents() {
     if (!confirm("Reset all character and optimizer data?")) return;
     state = createDefaultCharacter();
     localStorage.removeItem(STORAGE_KEY);
+    showValidationIssues([]);
     render();
     document.getElementById("f-known-spells").value = "";
     document.getElementById("f-prep-spells").value = "";
@@ -1220,16 +1174,29 @@ function wireEvents() {
     if (!txt) { setStatus("Paste JSON first.", true); return; }
     try {
       const parsed = JSON.parse(txt);
-      state = hydrateCharacter(parsed);
+      // Validate the raw input to collect diagnostics about malformed fields,
+      // then normalize to produce a safe, usable state.
+      const { issues } = validateState(parsed);
+      const normalized = hydrateCharacter(parsed);
+      state = normalized;
       render();
       document.getElementById("f-known-spells").value = state.spellcasting.knownSpells || "";
       document.getElementById("f-prep-spells").value = state.spellcasting.preparedSpells || "";
       document.getElementById("f-import-text").value = "";
       scheduleSave();
-      setStatus("Import successful.");
+      showValidationIssues(issues);
+      const hasErrors   = issues.some(i => i.severity === "error");
+      const hasWarnings = issues.length > 0;
+      if (hasErrors) {
+        setStatus("⚠ Import completed with errors — check diagnostics.");
+      } else if (hasWarnings) {
+        setStatus("Import completed with warnings — check diagnostics.");
+      } else {
+        setStatus("Import successful.");
+      }
     } catch (error) {
       console.error("Import failed:", error);
-      setStatus("⚠ Invalid JSON", true);
+      setStatus("⚠ Invalid JSON — could not parse.", true);
     }
   });
 
@@ -1261,8 +1228,17 @@ function applyBuildResult(idx) {
     state.skills = nextSkills;
     const castAb = getClassData(result.classKey).defaultCastingAbility;
     if (castAb) state.spellcasting.castingAbility = castAb;
+
+    // Normalize + validate the applied state; preserve existing optimizer results
+    const savedResults = state.optimizer.results || [];
+    const normalizedApplied = hydrateCharacter(state);
+    const { issues } = validateState(normalizedApplied);
+    state = normalizedApplied;
+    state.optimizer.results = savedResults;
+
     render();
     scheduleSave();
+    showValidationIssues(issues);
     setStatus(`Applied ${result.classLabel} build.`);
     // scroll to top
     window.scrollTo(0, 0);
