@@ -711,8 +711,11 @@ function renderAbilities() {
   if (state.abilityMode === "pointbuy") {
     const spent = ABILITIES.reduce((s, a) => s + pointBuyCost(state.abilities[a]), 0);
     const rem = POINT_BUY_MAX_POINTS - spent;
-    pbInfo.textContent = `Points: ${spent} / ${POINT_BUY_MAX_POINTS}  (${rem} remaining)`;
-    pbInfo.className = spent > POINT_BUY_MAX_POINTS ? "pb-info over" : "pb-info";
+    const overBudget = spent > POINT_BUY_MAX_POINTS;
+    pbInfo.textContent = overBudget
+      ? `Over budget — Points: ${spent} / ${POINT_BUY_MAX_POINTS} (${Math.abs(rem)} over limit)`
+      : `Points: ${spent} / ${POINT_BUY_MAX_POINTS}  (${rem} remaining)`;
+    pbInfo.className = overBudget ? "pb-info over" : "pb-info";
   } else {
     pbInfo.className = "pb-info hidden";
   }
@@ -797,7 +800,7 @@ function renderWeapons() {
       <td><input type="checkbox" ${w.proficient?"checked":""} data-wfield="proficient"></td>
       <td>${fmtMod(atk)}</td>
       <td>${avg}</td>
-      <td><button class="del-btn" data-del-weapon="${w.id}" title="Remove">✕</button></td>
+      <td><button class="del-btn" data-del-weapon="${w.id}" title="Remove ${escHtml(w.name)}" aria-label="Remove ${escHtml(w.name)}">✕</button></td>
     `;
     tbody.appendChild(tr);
   });
