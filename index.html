@@ -7,21 +7,23 @@
   <link rel="stylesheet" href="./styles.css">
 </head>
 <body>
+  <a href="#main-content" class="skip-link">Skip to main content</a>
+
   <!-- Toolbar -->
-  <div id="toolbar">
+  <header id="toolbar">
     <span id="app-title">D&amp;D 5e SRD Builder</span>
     <div id="toolbar-btns">
-      <button id="btn-optimize" title="Generate optimal builds">⚡ Optimize</button>
-      <button id="btn-cancel" title="Cancel optimization" class="hidden">✕ Cancel</button>
-      <button id="btn-apply-top" title="Apply top result to builder">✔ Apply Top</button>
-      <button id="btn-export" title="Export JSON">⬇ Export</button>
-      <button id="btn-reset" title="Reset all">↺ Reset</button>
+      <button id="btn-optimize" title="Generate optimal builds" aria-label="Optimize: generate optimal builds">⚡ Optimize</button>
+      <button id="btn-cancel" title="Cancel optimization" aria-label="Cancel optimization" class="hidden">✕ Cancel</button>
+      <button id="btn-apply-top" title="Apply top result to builder" aria-label="Apply top result to builder">✔ Apply Top</button>
+      <button id="btn-export" title="Export JSON" aria-label="Export character as JSON">⬇ Export</button>
+      <button id="btn-reset" title="Reset all" aria-label="Reset all fields">↺ Reset</button>
     </div>
-  </div>
+  </header>
 
   <!-- Status bar -->
-  <div id="statusbar">
-    <span id="status-msg" aria-live="polite">Ready.</span>
+  <div id="statusbar" role="region" aria-label="Status">
+    <span id="status-msg" role="status" aria-live="polite">Ready.</span>
     <span id="status-pb"></span>
     <span id="status-pp"></span>
     <span id="status-init"></span>
@@ -31,6 +33,7 @@
   <div id="validation-panel" class="hidden" role="status" aria-live="polite" aria-label="Validation diagnostics"></div>
 
   <!-- Main two-column layout -->
+  <main id="main-content">
   <div id="layout">
 
     <!-- LEFT: Builder -->
@@ -56,13 +59,13 @@
         <div class="panel-head">
           Ability Scores
           <span class="panel-head-right">
-            <select id="f-ability-mode">
+            <select id="f-ability-mode" aria-label="Ability score input mode">
               <option value="standard">Standard Array</option>
               <option value="pointbuy">Point Buy</option>
               <option value="manual">Manual</option>
             </select>
-            <button id="btn-std-array" title="Apply default standard array">Apply SA</button>
-            <button id="btn-auto-pb" title="Auto-assign point buy for objective">Auto PB</button>
+            <button id="btn-std-array" title="Apply default standard array" aria-label="Apply standard array">Apply SA</button>
+            <button id="btn-auto-pb" title="Auto-assign point buy for objective" aria-label="Auto-assign point buy for current objective">Auto PB</button>
           </span>
         </div>
         <div id="pb-info" class="pb-info hidden"></div>
@@ -81,7 +84,7 @@
       <!-- Skills section -->
       <section class="panel" id="sec-skills">
         <div class="panel-head">Skills
-          <span class="panel-head-right"><button id="btn-clear-skills" title="Clear all proficiencies">Clear</button></span>
+          <span class="panel-head-right"><button id="btn-clear-skills" title="Clear all proficiencies" aria-label="Clear all skill proficiencies">Clear</button></span>
         </div>
         <table id="skills-table">
           <thead><tr><th>Skill</th><th>Ability</th><th>Bonus</th><th>Prof</th><th>Exp</th></tr></thead>
@@ -92,7 +95,7 @@
       <!-- Weapons section -->
       <section class="panel" id="sec-weapons">
         <div class="panel-head">Weapons
-          <span class="panel-head-right"><button id="btn-add-weapon">+ Add</button></span>
+          <span class="panel-head-right"><button id="btn-add-weapon" aria-label="Add weapon">+ Add</button></span>
         </div>
         <table id="weapons-table">
           <thead><tr><th>Name</th><th>Ability</th><th>Dmg</th><th>+Mag</th><th>Prof</th><th>Atk</th><th>Avg</th><th></th></tr></thead>
@@ -175,6 +178,7 @@
 
     </div><!-- /col-optimizer -->
   </div><!-- /layout -->
+  </main><!-- /main-content -->
 
   <script type="module" src="./app.js"></script>
 </body>

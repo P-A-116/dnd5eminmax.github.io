@@ -8,6 +8,24 @@ body {
   min-height: 100vh;
 }
 
+/* ===== Skip link ===== */
+.skip-link {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: 200;
+  background: #58a6ff;
+  color: #0d1117;
+  padding: 0.4rem 0.75rem;
+  font-size: 0.85rem;
+  font-weight: 700;
+  text-decoration: none;
+  border-radius: 0 0 4px 0;
+  transform: translateY(-100%);
+  transition: transform 0.1s ease;
+}
+.skip-link:focus { transform: translateY(0); }
+
 /* ===== Toolbar ===== */
 #toolbar {
   display: flex;
@@ -19,6 +37,8 @@ body {
   position: sticky;
   top: 0;
   z-index: 100;
+  /* reset browser <header> margin/padding */
+  margin: 0;
 }
 #app-title {
   font-weight: 700;
@@ -90,6 +110,10 @@ button {
 }
 button:hover { background: #30363d; color: #f0f6fc; }
 button:active { background: #3d444e; }
+button:focus-visible {
+  outline: 2px solid #58a6ff;
+  outline-offset: 2px;
+}
 #btn-optimize { background: #1f6feb; border-color: #388bfd; color: #fff; }
 #btn-optimize:hover { background: #388bfd; }
 #btn-optimize:disabled { background: #1a3a5c; border-color: #264f78; color: #8b949e; cursor: not-allowed; }
@@ -117,11 +141,16 @@ textarea {
   outline: none;
 }
 input[type="text"]:focus,
+input[type="text"]:focus-visible,
 input[type="number"]:focus,
+input[type="number"]:focus-visible,
 select:focus,
-textarea:focus {
+select:focus-visible,
+textarea:focus,
+textarea:focus-visible {
   border-color: #58a6ff;
-  box-shadow: 0 0 0 2px rgba(88,166,255,0.15);
+  box-shadow: 0 0 0 2px rgba(88,166,255,0.25);
+  outline: none;
 }
 textarea { resize: vertical; min-height: 3rem; }
 input[type="checkbox"] { width: auto; accent-color: #58a6ff; cursor: pointer; }
