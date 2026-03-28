@@ -12,6 +12,7 @@
     <span id="app-title">D&amp;D 5e SRD Builder</span>
     <div id="toolbar-btns">
       <button id="btn-optimize" title="Generate optimal builds">⚡ Optimize</button>
+      <button id="btn-cancel" title="Cancel optimization" class="hidden">✕ Cancel</button>
       <button id="btn-apply-top" title="Apply top result to builder">✔ Apply Top</button>
       <button id="btn-export" title="Export JSON">⬇ Export</button>
       <button id="btn-reset" title="Reset all">↺ Reset</button>
@@ -20,7 +21,7 @@
 
   <!-- Status bar -->
   <div id="statusbar">
-    <span id="status-msg">Ready.</span>
+    <span id="status-msg" aria-live="polite">Ready.</span>
     <span id="status-pb"></span>
     <span id="status-pp"></span>
     <span id="status-init"></span>

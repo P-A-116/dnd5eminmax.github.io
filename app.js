@@ -19,6 +19,8 @@ import {
 
 import { normalizeState, validateState } from "./validation.js";
 
+import { CancelToken, runOptimizerAsync } from "./optimizer-runner.js";
+
 import {
   AVG_DIE_FINESSE, AVG_DIE_HEAVY,
   NOVA_BURST_BONUS_FACTOR, BURST_FACTOR_CAP, BURST_FACTOR_PER_REST,
@@ -389,6 +391,68 @@ function buildMilestonePlan(baseClass, objective, assumptions) {
 }
 
 /**
+ * Build a single class result entry (sync).
+ * Called for each class key by both the synchronous
+ * generateCandidateBuilds helper and the async runner.
+ *
+ * @param {string} classKey
+ * @param {string} objective
+ * @param {Object} assumptions
+ * @returns {Object|null}
+ */
+function buildOneClassResult(classKey, objective, assumptions) {
+  try {
+    const plan = buildMilestonePlan(classKey, objective, assumptions);
+    if (!plan || plan.length === 0) return null;
+
+    const finalStep = plan[plan.length - 1] || plan[0];
+    if (!finalStep || !finalStep.metrics) return null;
+
+    const score = finalStep.metrics.score || 0;
+    const cls = getClassData(classKey);
+
+    // Identify strengths
+    const strengths = [];
+    if (finalStep.metrics.sustainedDpr >= STRENGTH_THRESHOLD_SUSTAINED_DPR) strengths.push("Strong sustained offense");
+    if (finalStep.metrics.novaDpr >= STRENGTH_THRESHOLD_NOVA_DPR)            strengths.push("Strong burst potential");
+    if (finalStep.metrics.effectiveHp >= STRENGTH_THRESHOLD_EFFECTIVE_HP)    strengths.push("High durability");
+    if (finalStep.metrics.controlPressure >= STRENGTH_THRESHOLD_CONTROL)     strengths.push("Strong control");
+    if (finalStep.metrics.skillScore >= STRENGTH_THRESHOLD_SKILL)            strengths.push("High utility");
+    if (cls.tags.includes("short_rest"))                                      strengths.push("Short-rest efficient");
+
+    // Identify tradeoffs
+    const tradeoffs = [];
+    if (cls.hitDie <= 6) tradeoffs.push("Lower durability");
+    if (!cls.spellcasting && objective === "controller") tradeoffs.push("Limited magical control");
+    if (cls.armorType === "light" && objective === "tank") tradeoffs.push("Weaker armor scaling");
+    if (cls.tags.includes("nova_dpr") && assumptions.roundsPerEncounter >= 5) {
+      tradeoffs.push("Value dips in long fights");
+    }
+
+    return {
+      classKey,
+      classLabel: cls.label,
+      score,
+      plan,
+      strengths,
+      tradeoffs,
+      summary: {
+        primaryStat: finalStep.metrics.primary,
+        sustainedDpr: finalStep.metrics.sustainedDpr,
+        novaDpr: finalStep.metrics.novaDpr,
+        effectiveHp: finalStep.metrics.effectiveHp,
+        spellDc: finalStep.metrics.spellDc,
+        initiative: finalStep.metrics.initiative,
+        ac: finalStep.metrics.ac,
+      },
+    };
+  } catch (error) {
+    console.error(`Error generating build for ${classKey}:`, error);
+    return null;
+  }
+}
+
+/**
  * Generate optimized candidate builds for all classes
  * Returns sorted array of build recommendations
  */
@@ -396,61 +460,13 @@ function generateCandidateBuilds(config) {
   try {
     const { objective, assumptions, classPool } = config;
     const pool = classPool && classPool.length ? classPool : CLASS_OPTIONS;
-    
-    const results = pool.map(classKey => {
-      try {
-        const plan = buildMilestonePlan(classKey, objective, assumptions);
-        if (!plan || plan.length === 0) return null;
-        
-        const finalStep = plan[plan.length - 1] || plan[0];
-        if (!finalStep || !finalStep.metrics) return null;
-        
-        const score = finalStep.metrics.score || 0;
-        const cls = getClassData(classKey);
-        
-        // Identify strengths
-        const strengths = [];
-        if (finalStep.metrics.sustainedDpr >= STRENGTH_THRESHOLD_SUSTAINED_DPR) strengths.push("Strong sustained offense");
-        if (finalStep.metrics.novaDpr >= STRENGTH_THRESHOLD_NOVA_DPR)            strengths.push("Strong burst potential");
-        if (finalStep.metrics.effectiveHp >= STRENGTH_THRESHOLD_EFFECTIVE_HP)    strengths.push("High durability");
-        if (finalStep.metrics.controlPressure >= STRENGTH_THRESHOLD_CONTROL)     strengths.push("Strong control");
-        if (finalStep.metrics.skillScore >= STRENGTH_THRESHOLD_SKILL)            strengths.push("High utility");
-        if (cls.tags.includes("short_rest"))                                      strengths.push("Short-rest efficient");
-        
-        // Identify tradeoffs
-        const tradeoffs = [];
-        if (cls.hitDie <= 6) tradeoffs.push("Lower durability");
-        if (!cls.spellcasting && objective === "controller") tradeoffs.push("Limited magical control");
-        if (cls.armorType === "light" && objective === "tank") tradeoffs.push("Weaker armor scaling");
-        if (cls.tags.includes("nova_dpr") && assumptions.roundsPerEncounter >= 5) {
-          tradeoffs.push("Value dips in long fights");
-        }
-        
-        return {
-          classKey, 
-          classLabel: cls.label, 
-          score, 
-          plan, 
-          strengths, 
-          tradeoffs,
-          summary: {
-            primaryStat: finalStep.metrics.primary,
-            sustainedDpr: finalStep.metrics.sustainedDpr,
-            novaDpr: finalStep.metrics.novaDpr,
-            effectiveHp: finalStep.metrics.effectiveHp,
-            spellDc: finalStep.metrics.spellDc,
-            initiative: finalStep.metrics.initiative,
-            ac: finalStep.metrics.ac,
-          },
-        };
-      } catch (error) {
-        console.error(`Error generating build for ${classKey}:`, error);
-        return null;
-      }
-    });
-    
+
+    const results = pool
+      .map(classKey => buildOneClassResult(classKey, objective, assumptions))
+      .filter(r => r !== null);
+
     // Filter out failed builds and sort by score
-    return results.filter(r => r !== null).sort((a, b) => b.score - a.score);
+    return results.sort((a, b) => b.score - a.score);
   } catch (error) {
     console.error("Error generating candidate builds:", error);
     return [];
@@ -460,6 +476,9 @@ function generateCandidateBuilds(config) {
 // =========================================================
 // 4. State Model
 // =========================================================
+
+// Active cancel token; null when no optimization is running.
+let _currentCancelToken = null;
 
 /**
  * Generate a unique ID with crypto fallback
@@ -1122,20 +1141,72 @@ function wireEvents() {
   });
 
   // Toolbar buttons
-  document.getElementById("btn-optimize").addEventListener("click", () => {
+  document.getElementById("btn-optimize").addEventListener("click", async () => {
+    // Validate state before starting; stop on errors
+    const { issues } = validateState(state);
+    const hasErrors = issues.some(i => i.severity === "error");
+    if (hasErrors) {
+      showValidationIssues(issues);
+      setStatus("⚠ Fix errors before optimizing.", true);
+      return;
+    }
+
+    const btnOptimize = document.getElementById("btn-optimize");
+    const btnCancel   = document.getElementById("btn-cancel");
+    const btnApplyTop = document.getElementById("btn-apply-top");
+
+    // Disable optimize / apply; show cancel
+    btnOptimize.disabled = true;
+    btnApplyTop.disabled = true;
+    btnCancel.classList.remove("hidden");
+
+    const pool = CLASS_OPTIONS;
+    setStatus(`Generating builds… 0 / ${pool.length}`);
+
+    _currentCancelToken = new CancelToken();
+    const token = _currentCancelToken;
+
+    const { objective, assumptions } = state.optimizer;
+
     try {
-      setStatus("Generating builds…");
-      const results = generateCandidateBuilds({
-        objective: state.optimizer.objective,
-        assumptions: state.optimizer.assumptions,
-        classPool: [],
-      }).slice(0, 5);
-      state.optimizer.results = results;
-      renderResults(); renderMetrics(); scheduleSave();
-      setStatus(`Top ${results.length} builds generated.`);
+      const sorted = await runOptimizerAsync(
+        pool,
+        classKey => buildOneClassResult(classKey, objective, assumptions),
+        token,
+        ({ processed, total, phase }) => {
+          if (phase === "generating") {
+            setStatus(`Generating builds… ${processed} / ${total}`);
+          } else if (phase === "sorting") {
+            setStatus("Sorting results…");
+          } else {
+            setStatus(`Optimizing… (${phase})`);
+          }
+        },
+      );
+
+      if (sorted === null) {
+        // Run was cancelled
+        setStatus("Optimization cancelled.");
+      } else {
+        state.optimizer.results = sorted.slice(0, 5);
+        renderResults(); renderMetrics(); scheduleSave();
+        setStatus(`Top ${state.optimizer.results.length} builds generated.`);
+      }
     } catch (error) {
       console.error("Optimization failed:", error);
       setStatus("⚠ Optimization failed", true);
+    } finally {
+      btnOptimize.disabled = false;
+      btnApplyTop.disabled = false;
+      btnCancel.classList.add("hidden");
+      _currentCancelToken = null;
+    }
+  });
+
+  document.getElementById("btn-cancel").addEventListener("click", () => {
+    if (_currentCancelToken) {
+      _currentCancelToken.cancel();
+      setStatus("Cancelling…");
     }
   });
 
