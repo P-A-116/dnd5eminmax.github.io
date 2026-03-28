@@ -260,6 +260,92 @@ export function weaponAtkBonus(weapon, abilities, pb) {
   return mod + prof + magic;
 }
 
+// =========================================================
+// Spell Slot Tables (SRD progressions)
+// =========================================================
+
+// Full-caster (bard, cleric, druid, sorcerer, wizard) slots by level.
+// Keys are character levels 1–20; values are objects keyed by slot level.
+const FULL_CASTER_SLOTS = {
+  1:  {1:2},
+  2:  {1:3},
+  3:  {1:4,2:2},
+  4:  {1:4,2:3},
+  5:  {1:4,2:3,3:2},
+  6:  {1:4,2:3,3:3},
+  7:  {1:4,2:3,3:3,4:1},
+  8:  {1:4,2:3,3:3,4:2},
+  9:  {1:4,2:3,3:3,4:3,5:1},
+  10: {1:4,2:3,3:3,4:3,5:2},
+  11: {1:4,2:3,3:3,4:3,5:2,6:1},
+  12: {1:4,2:3,3:3,4:3,5:2,6:1},
+  13: {1:4,2:3,3:3,4:3,5:2,6:1,7:1},
+  14: {1:4,2:3,3:3,4:3,5:2,6:1,7:1},
+  15: {1:4,2:3,3:3,4:3,5:2,6:1,7:1,8:1},
+  16: {1:4,2:3,3:3,4:3,5:2,6:1,7:1,8:1},
+  17: {1:4,2:3,3:3,4:3,5:2,6:1,7:1,8:1,9:1},
+  18: {1:4,2:3,3:3,4:3,5:3,6:1,7:1,8:1,9:1},
+  19: {1:4,2:3,3:3,4:3,5:3,6:2,7:1,8:1,9:1},
+  20: {1:4,2:3,3:3,4:3,5:3,6:2,7:2,8:1,9:1},
+};
+
+// Half-caster (paladin, ranger) slots by level.
+const HALF_CASTER_SLOTS = {
+  1:  {},
+  2:  {1:2},
+  3:  {1:3},
+  4:  {1:3},
+  5:  {1:4,2:2},
+  6:  {1:4,2:2},
+  7:  {1:4,2:3},
+  8:  {1:4,2:3},
+  9:  {1:4,2:3,3:2},
+  10: {1:4,2:3,3:2},
+  11: {1:4,2:3,3:3},
+  12: {1:4,2:3,3:3},
+  13: {1:4,2:3,3:3,4:1},
+  14: {1:4,2:3,3:3,4:1},
+  15: {1:4,2:3,3:3,4:2},
+  16: {1:4,2:3,3:3,4:2},
+  17: {1:4,2:3,3:3,4:3,5:1},
+  18: {1:4,2:3,3:3,4:3,5:1},
+  19: {1:4,2:3,3:3,4:3,5:2},
+  20: {1:4,2:3,3:3,4:3,5:2},
+};
+
+// Warlock pact-magic slots by level (recover on short rest).
+const PACT_CASTER_SLOTS = {
+  1:  {1:1},  2:  {1:2},
+  3:  {2:2},  4:  {2:2},
+  5:  {3:2},  6:  {3:2},
+  7:  {4:2},  8:  {4:2},
+  9:  {5:2},  10: {5:2},
+  11: {5:3},  12: {5:3},
+  13: {5:3},  14: {5:3},
+  15: {5:3},  16: {5:3},
+  17: {5:4},  18: {5:4},
+  19: {5:4},  20: {5:4},
+};
+
+/**
+ * Estimate spell slots for a class at a given level based on SRD progressions.
+ * Returns an object keyed by slot level (1–9) with slot counts.
+ * Returns {} for non-spellcasting classes.
+ *
+ * @param {string} classKey
+ * @param {number} level
+ * @returns {object}
+ */
+export function estimateSpellSlots(classKey, level) {
+  const cls = getClassData(classKey);
+  if (!cls.spellcasting) return {};
+  const lvl = clamp(validateLevel(level), 1, 20);
+  if (cls.spellcasting === "full")  return { ...(FULL_CASTER_SLOTS[lvl]  || {}) };
+  if (cls.spellcasting === "half")  return { ...(HALF_CASTER_SLOTS[lvl]  || {}) };
+  if (cls.spellcasting === "pact")  return { ...(PACT_CASTER_SLOTS[lvl]  || {}) };
+  return {};
+}
+
 /**
  * Average damage string for a weapon (e.g. "7.5").
  * Parses standard dice notation such as "2d6" or "1d8+3".
@@ -332,5 +418,6 @@ if (typeof globalThis !== "undefined") {
     saveFailChance,
     weaponAtkBonus,
     weaponAvgDamage,
+    estimateSpellSlots,
   };
 }

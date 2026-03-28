@@ -15,6 +15,7 @@ import {
   getClassData, getEstimatedHP, getArmorClassEstimate, getCasterAbility,
   estimateAttacksPerRound, effectiveHitChance, saveFailChance,
   weaponAtkBonus, weaponAvgDamage,
+  estimateSpellSlots,
 } from "./dnd-engine.js";
 
 import { normalizeState, validateState } from "./validation.js";
@@ -22,16 +23,19 @@ import { normalizeState, validateState } from "./validation.js";
 import { CancelToken, runOptimizerAsync } from "./optimizer-runner.js";
 
 import {
-  AVG_DIE_FINESSE, AVG_DIE_HEAVY,
-  NOVA_BURST_BONUS_FACTOR, BURST_FACTOR_CAP, BURST_FACTOR_PER_REST,
-  DAMAGE_FEAT_BONUS, INITIATIVE_FEAT_BONUS,
   BASE_SPELL_DC,
-  CONTROL_PRESSURE_PB_MULT, CONTROL_PRESSURE_BASE, CONTROL_CON_WEIGHT, CONTROL_NON_CASTER_FACTOR,
+  CONTROL_SPELL_LEVEL_WEIGHTS,
   SKILL_ROGUE_BONUS_MULT, SKILL_BARD_BONUS_MULT,
-  STRENGTH_THRESHOLD_SUSTAINED_DPR, STRENGTH_THRESHOLD_NOVA_DPR,
+  STRENGTH_THRESHOLD_SUSTAINED_DPR, STRENGTH_THRESHOLD_BURST_DPR,
   STRENGTH_THRESHOLD_EFFECTIVE_HP, STRENGTH_THRESHOLD_CONTROL, STRENGTH_THRESHOLD_SKILL,
   OBJECTIVE_WEIGHTS, OBJECTIVE_WEIGHTS_DEFAULT,
 } from "./optimizer-constants.js";
+
+import {
+  computeSustainedDpr,
+  computeBurstDprRound1,
+  alertInitiativeBonus,
+} from "./damage-model.js";
 
 // =========================================================
 // CONSTANTS - App-specific magic numbers
@@ -95,19 +99,22 @@ const OPTIMIZER_OBJECTIVES = [
 const RULE_PRESETS = {
   strict_srd: {
     label: "Strict SRD",
-    feats: false, multiclass: false, magicBonus: 0,
+    feats: false, multiclass: false,
+    weaponMagicBonus: 0, armorMagicBonus: 0, spellFocusBonus: 0,
     shortRests: 1, roundsPerEncounter: 3, encountersPerDay: 4,
     targetAC: 15, targetSaveBonus: 3, advantageRate: 0.1,
   },
   common_optimized: {
     label: "Common Optimized",
-    feats: true, multiclass: true, magicBonus: 1,
+    feats: true, multiclass: true,
+    weaponMagicBonus: 1, armorMagicBonus: 1, spellFocusBonus: 1,
     shortRests: 2, roundsPerEncounter: 4, encountersPerDay: 4,
     targetAC: 15, targetSaveBonus: 4, advantageRate: 0.25,
   },
   no_multiclass: {
     label: "Feats / No Multiclass",
-    feats: true, multiclass: false, magicBonus: 0,
+    feats: true, multiclass: false,
+    weaponMagicBonus: 0, armorMagicBonus: 0, spellFocusBonus: 0,
     shortRests: 2, roundsPerEncounter: 3, encountersPerDay: 5,
     targetAC: 16, targetSaveBonus: 5, advantageRate: 0.15,
   },
@@ -266,39 +273,74 @@ function evaluateBuildSnapshot(snapshot, assumptions, objective) {
     const conMod = modFromScore(snapshot.abilities.con);
     const cls = getClassData(snapshot.class);
 
+    // Split magic bonuses from assumptions
+    const weaponMagic = validateMagicBonus(assumptions.weaponMagicBonus ?? assumptions.magicBonus ?? 0);
+    const armorMagic  = validateMagicBonus(assumptions.armorMagicBonus  ?? assumptions.magicBonus ?? 0);
+    const spellMagic  = validateMagicBonus(assumptions.spellFocusBonus  ?? assumptions.magicBonus ?? 0);
+
     // Offensive capabilities
-    const attackBonus = pb + primaryMod + validateMagicBonus(assumptions.magicBonus);
-    const avgDie = cls.weaponStyle === "dex" ? AVG_DIE_FINESSE : AVG_DIE_HEAVY; // Finesse/ranged vs heavy weapons
+    const attackBonus = pb + primaryMod + weaponMagic;
     const attacks = estimateAttacksPerRound(snapshot.class, snapshot.level);
     const hitChance = effectiveHitChance(attackBonus, assumptions.targetAC, assumptions.advantageRate);
-    const bonusDamage = cls.features?.bonusDamagePerAttack || 0;
-    const perHitDamage = avgDie + primaryMod + validateMagicBonus(assumptions.magicBonus) + bonusDamage;
-    const sustainedDpr = Math.max(0, hitChance * perHitDamage * attacks);
 
-    // Nova/burst damage
-    const hasShortRestAbilities = (cls.features?.burstUsesPerShortRest || 0) > 0;
-    const burstFactor = hasShortRestAbilities ? 1 + Math.min(BURST_FACTOR_CAP, assumptions.shortRests * BURST_FACTOR_PER_REST) : 1;
-    const burstBonus = hasShortRestAbilities ? NOVA_BURST_BONUS_FACTOR : 0;
-    const featBonus = snapshot.featPlan?.includes("damage_feat") ? DAMAGE_FEAT_BONUS : 0;
-    const novaDpr = sustainedDpr * (1 + burstBonus) * burstFactor + featBonus;
+    // Class-specific sustained DPR (per-attack + once-per-turn riders)
+    const sustainedDpr = computeSustainedDpr({
+      classKey:         snapshot.class,
+      level:            snapshot.level,
+      attackBonus,
+      targetAC:         assumptions.targetAC,
+      advantageRate:    assumptions.advantageRate,
+      primaryMod,
+      weaponMagicBonus: weaponMagic,
+      attacks,
+      featPlan:         snapshot.featPlan,
+    });
+
+    // Spell slots: use snapshot's actual slots, falling back to level-based estimate
+    const spellSlots = (snapshot.spellcasting?.slots
+      && Object.values(snapshot.spellcasting.slots).some(v => v > 0))
+      ? snapshot.spellcasting.slots
+      : estimateSpellSlots(snapshot.class, snapshot.level);
+
+    // Burst DPR (Round 1): explicit resource-budget model, added to sustained
+    const burstExtra = computeBurstDprRound1({
+      classKey:         snapshot.class,
+      level:            snapshot.level,
+      hitChance,
+      primaryMod,
+      weaponMagicBonus: weaponMagic,
+      attacks,
+      spellSlots,
+      assumptions,
+    });
+    const burstDprRound1 = sustainedDpr + burstExtra;
 
     // Defensive capabilities
     const hp = getEstimatedHP(snapshot.level, snapshot.class, conMod);
     const ac = getArmorClassEstimate({ 
       ...snapshot, 
       hasShield: objective === "tank", 
-      armorMagicBonus: assumptions.magicBonus 
+      armorMagicBonus: armorMagic,
     }, dexMod);
     const effectiveHp = hp * (1 + (ac - EHP_AC_BASELINE) * EHP_AC_SCALAR);
 
     // Spellcasting metrics
     const casterAbility = cls.defaultCastingAbility || "int";
     const spellDc = BASE_SPELL_DC + pb + modFromScore(snapshot.abilities[casterAbility]);
-    const spellAttack = pb + modFromScore(snapshot.abilities[casterAbility]) + validateMagicBonus(assumptions.magicBonus);
+    const spellAttack = pb + modFromScore(snapshot.abilities[casterAbility]) + spellMagic;
     const failChance = saveFailChance(spellDc, assumptions.targetSaveBonus);
-    const controlPressure = cls.spellcasting
-      ? failChance * (CONTROL_PRESSURE_BASE + pb * CONTROL_PRESSURE_PB_MULT) + (modFromScore(snapshot.abilities.con) * CONTROL_CON_WEIGHT)
-      : failChance * CONTROL_NON_CASTER_FACTOR;
+
+    // Control pressure: slot-budget model (spell level weighted)
+    let controlPressure = 0;
+    if (cls.spellcasting) {
+      const weightedSlots = Object.entries(spellSlots).reduce((sum, [lv, count]) => {
+        const weight = CONTROL_SPELL_LEVEL_WEIGHTS[Number(lv)] || 1;
+        return sum + (Number(count) || 0) * weight;
+      }, 0);
+      const attemptsPerEncounter = weightedSlots / Math.max(1, assumptions.encountersPerDay || 4);
+      controlPressure = failChance * attemptsPerEncounter * pb;
+    }
+    // Non-casters: no save-forcing control in base model (near zero)
 
     // Skill proficiency score
     const skillKeys = getSuggestedSkills(snapshot.class, objective);
@@ -312,17 +354,16 @@ function evaluateBuildSnapshot(snapshot, assumptions, objective) {
     const concentrationScore = cls.spellcasting
       ? (conMod + (cls.saveProficiencies.includes("con") ? pb : 0))
       : conMod;
-    const initiativeBonus = snapshot.featPlan?.includes("initiative_feat") ? INITIATIVE_FEAT_BONUS : 0;
-    const initiative = dexMod + initiativeBonus;
+    const initiative = dexMod + alertInitiativeBonus(snapshot.featPlan);
 
     // Calculate weighted score based on objective
     const W = OBJECTIVE_WEIGHTS[objective] || OBJECTIVE_WEIGHTS_DEFAULT;
 
-    const score = sustainedDpr*W.sustainedDpr + novaDpr*W.novaDpr + effectiveHp*W.effectiveHp +
+    const score = sustainedDpr*W.sustainedDpr + burstDprRound1*W.burstDprRound1 + effectiveHp*W.effectiveHp +
       controlPressure*W.controlPressure + skillScore*W.skillScore + concentrationScore*W.concentrationScore + initiative*W.initiative;
 
     return { 
-      score, sustainedDpr, novaDpr, effectiveHp, ac, hp, 
+      score, sustainedDpr, burstDprRound1, effectiveHp, ac, hp, 
       spellDc, spellAttack, controlPressure, skillScore, 
       concentrationScore, initiative, hitChance, primary 
     };
@@ -330,7 +371,7 @@ function evaluateBuildSnapshot(snapshot, assumptions, objective) {
     console.error("Error evaluating build snapshot:", error, snapshot);
     // Return safe defaults
     return {
-      score: 0, sustainedDpr: 0, novaDpr: 0, effectiveHp: 30, ac: 10, hp: 30,
+      score: 0, sustainedDpr: 0, burstDprRound1: 0, effectiveHp: 30, ac: 10, hp: 30,
       spellDc: 10, spellAttack: 0, controlPressure: 0, skillScore: 0,
       concentrationScore: 0, initiative: 0, hitChance: 0.5, primary: "str"
     };
@@ -352,17 +393,30 @@ function buildMilestonePlan(baseClass, objective, assumptions) {
       const asiLevels = ASI_LEVELS.filter(n => n <= level);
       const primary = getPrimaryAbilityForObjective(baseClass, objective);
       const caster = getClassData(baseClass).defaultCastingAbility;
+      const weaponStyle = getClassData(baseClass).weaponStyle;
       
       // Simulate ASI/feat choices
       asiLevels.forEach((_, idx) => {
         const canTakeFeat = assumptions.feats;
-        const preferInitiative = canTakeFeat && objective === "controller" && idx === 0;
-        const preferDamage = canTakeFeat && ["sustained_dpr","nova_dpr"].includes(objective) && idx === 0;
-        
-        if (preferInitiative) {
-          featPlan.push("initiative_feat");
-        } else if (preferDamage) {
-          featPlan.push("damage_feat");
+
+        // Pick the most appropriate feat for this class/objective/slot
+        const wantsDmgFeat = canTakeFeat && ["sustained_dpr","nova_dpr"].includes(objective) && idx === 0;
+        const wantsInitFeat = canTakeFeat && objective === "controller" && idx === 0;
+
+        if (wantsInitFeat) {
+          featPlan.push("alert");
+        } else if (wantsDmgFeat) {
+          // Choose the damage feat appropriate for this weapon style
+          if (weaponStyle === "str") {
+            featPlan.push("gwm");
+          } else if (weaponStyle === "dex") {
+            featPlan.push("sharpshooter");
+          } else {
+            // Casters or unsupported: skip feat, take ASI instead
+            if (abilities[primary] < ABILITY_SCORE_MAX) {
+              abilities[primary] = Math.min(ABILITY_SCORE_MAX, abilities[primary] + 2);
+            }
+          }
         } else {
           // Take ASI to boost primary, then con, then caster stat
           if (abilities[primary] < ABILITY_SCORE_MAX) {
@@ -379,8 +433,17 @@ function buildMilestonePlan(baseClass, objective, assumptions) {
           abilities[primary] = Math.min(ABILITY_SCORE_MAX, abilities[primary] + 2);
         }
       });
-      
-      const snapshot = { class: baseClass, level, abilities, featPlan };
+
+      // Include estimated spell slots so control pressure and burst compute correctly
+      const estimatedSlots = estimateSpellSlots(baseClass, level);
+      const castAbility = getClassData(baseClass).defaultCastingAbility || "int";
+      const snapshot = {
+        class: baseClass,
+        level,
+        abilities,
+        featPlan,
+        spellcasting: { slots: estimatedSlots, castingAbility: castAbility },
+      };
       const metrics = evaluateBuildSnapshot(snapshot, assumptions, objective);
       return { level, snapshot, metrics };
     });
@@ -414,7 +477,7 @@ function buildOneClassResult(classKey, objective, assumptions) {
     // Identify strengths
     const strengths = [];
     if (finalStep.metrics.sustainedDpr >= STRENGTH_THRESHOLD_SUSTAINED_DPR) strengths.push("Strong sustained offense");
-    if (finalStep.metrics.novaDpr >= STRENGTH_THRESHOLD_NOVA_DPR)            strengths.push("Strong burst potential");
+    if (finalStep.metrics.burstDprRound1 >= STRENGTH_THRESHOLD_BURST_DPR)   strengths.push("Strong burst potential");
     if (finalStep.metrics.effectiveHp >= STRENGTH_THRESHOLD_EFFECTIVE_HP)    strengths.push("High durability");
     if (finalStep.metrics.controlPressure >= STRENGTH_THRESHOLD_CONTROL)     strengths.push("Strong control");
     if (finalStep.metrics.skillScore >= STRENGTH_THRESHOLD_SKILL)            strengths.push("High utility");
@@ -439,7 +502,7 @@ function buildOneClassResult(classKey, objective, assumptions) {
       summary: {
         primaryStat: finalStep.metrics.primary,
         sustainedDpr: finalStep.metrics.sustainedDpr,
-        novaDpr: finalStep.metrics.novaDpr,
+        burstDprRound1: finalStep.metrics.burstDprRound1,
         effectiveHp: finalStep.metrics.effectiveHp,
         spellDc: finalStep.metrics.spellDc,
         initiative: finalStep.metrics.initiative,
@@ -511,8 +574,7 @@ function createDefaultCharacter() {
     optimizer: {
       objective: "balanced",
       rulePreset: "common_optimized",
-      assumptions: { ...RULE_PRESETS.common_optimized, analysisLevel: 8 },
-      results: [],
+      assumptions: { ...RULE_PRESETS.common_optimized, analysisLevel: 8 },      results: [],
     },
   };
 }
@@ -837,15 +899,17 @@ function renderNotes() {
 
 // --- Optimizer section ---
 const ASSUMPTION_FIELDS = [
-  { key: "targetAC",          label: "Target AC",        type: "number", min: 10, max: 25 },
-  { key: "targetSaveBonus",   label: "Target Save",      type: "number", min: 0,  max: 12 },
-  { key: "advantageRate",     label: "Adv Rate (0–1)",   type: "number", min: 0,  max: 1, step: 0.05 },
-  { key: "magicBonus",        label: "Magic Bonus",      type: "number", min: 0,  max: MAX_MAGIC_BONUS },
-  { key: "shortRests",        label: "Short Rests/Day",  type: "number", min: 0,  max: 6 },
-  { key: "roundsPerEncounter",label: "Rounds/Encounter", type: "number", min: 1,  max: 10 },
-  { key: "encountersPerDay",  label: "Enc/Day",          type: "number", min: 1,  max: 8 },
-  { key: "feats",             label: "Feats Allowed",    type: "checkbox" },
-  { key: "multiclass",        label: "Multiclass",       type: "checkbox" },
+  { key: "targetAC",           label: "Target AC",           type: "number", min: 10, max: 25 },
+  { key: "targetSaveBonus",   label: "Target Save",          type: "number", min: 0,  max: 12 },
+  { key: "advantageRate",     label: "Adv Rate (0–1)",       type: "number", min: 0,  max: 1, step: 0.05 },
+  { key: "weaponMagicBonus",  label: "Weapon Magic Bonus",   type: "number", min: 0,  max: MAX_MAGIC_BONUS },
+  { key: "armorMagicBonus",   label: "Armor Magic Bonus",    type: "number", min: 0,  max: MAX_MAGIC_BONUS },
+  { key: "spellFocusBonus",   label: "Spell Focus Bonus",    type: "number", min: 0,  max: MAX_MAGIC_BONUS },
+  { key: "shortRests",        label: "Short Rests/Day",      type: "number", min: 0,  max: 6 },
+  { key: "roundsPerEncounter",label: "Rounds/Encounter",     type: "number", min: 1,  max: 10 },
+  { key: "encountersPerDay",  label: "Enc/Day",              type: "number", min: 1,  max: 8 },
+  { key: "feats",             label: "Feats Allowed",        type: "checkbox" },
+  { key: "multiclass",        label: "Multiclass",           type: "checkbox" },
 ];
 
 function renderOptimizer() {
@@ -876,14 +940,14 @@ function renderMetrics() {
     const grid = document.getElementById("metrics-grid");
     if (!grid) return;
     const items = [
-      ["Sust DPR", fmtFixed(metrics.sustainedDpr)],
-      ["Nova DPR", fmtFixed(metrics.novaDpr)],
-      ["Eff HP",   Math.round(metrics.effectiveHp)],
-      ["AC",       metrics.ac],
-      ["Spell DC", metrics.spellDc],
-      ["Control",  fmtFixed(metrics.controlPressure)],
-      ["Skills",   fmtFixed(metrics.skillScore)],
-      ["Score",    fmtFixed(metrics.score)],
+      ["Sust DPR",       fmtFixed(metrics.sustainedDpr)],
+      ["Burst DPR (Rd 1)", fmtFixed(metrics.burstDprRound1)],
+      ["Eff HP",         Math.round(metrics.effectiveHp)],
+      ["AC",             metrics.ac],
+      ["Spell DC",       metrics.spellDc],
+      ["Control",        fmtFixed(metrics.controlPressure)],
+      ["Skills",         fmtFixed(metrics.skillScore)],
+      ["Score",          fmtFixed(metrics.score)],
     ];
     grid.innerHTML = items.map(([lbl, val]) =>
       `<div class="metric-chip"><div class="mval">${val}</div><div class="mlbl">${lbl}</div></div>`
@@ -918,7 +982,7 @@ function renderResults() {
       </div>
       <div class="result-stats">
         <span>DPR: ${fmtFixed(s.sustainedDpr)}</span>
-        <span>Nova: ${fmtFixed(s.novaDpr)}</span>
+        <span>Burst: ${fmtFixed(s.burstDprRound1)}</span>
         <span>eHP: ${Math.round(s.effectiveHp)}</span>
         <span>AC: ${s.ac}</span>
         <span>SpDC: ${s.spellDc}</span>
