@@ -466,7 +466,7 @@ function renderAbilities() {
     const tr = document.createElement("tr");
     tr.innerHTML = `
       <td>${ABILITY_LABELS[ab]}</td>
-      <td><input type="number" min="3" max="20" value="${score}" data-ab="${ab}"></td>
+      <td><input type="number" min="${state.abilityMode === 'pointbuy' ? 8 : 3}" max="${state.abilityMode === 'pointbuy' ? 15 : 20}" value="${score}" data-ab="${ab}"></td>
       <td class="mod-cell">${fmtMod(mod)}</td>
       <td class="save-cell ${saveProf ? "save-prof" : ""}">${fmtMod(saveMod)}${saveProf ? " ●" : ""}</td>
     `;
@@ -755,7 +755,7 @@ function wireEvents() {
     const ab = e.target.dataset.ab;
     if (!ab) return;
     const min = state.abilityMode === "pointbuy" ? 8 : 3;
-    const max = state.abilityMode === "pointbuy" ? 20 : 20;
+    const max = state.abilityMode === "pointbuy" ? 15 : 20;
     state.abilities[ab] = clamp(Number(e.target.value) || 8, min, max);
     e.target.value = state.abilities[ab];
     renderAbilities(); renderDerived(); renderSkills(); renderWeapons(); renderMetrics();
