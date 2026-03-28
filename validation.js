@@ -15,6 +15,8 @@ import {
   clamp, validateLevel, validateMagicBonus, validateClassKey, validateAbilityKey,
 } from "./dnd-engine.js";
 
+import { DEFAULT_ASSUMPTIONS } from "./optimizer-constants.js";
+
 // =========================================================
 // Small helpers
 // =========================================================
@@ -97,18 +99,8 @@ function defaultSpellSlots() {
 }
 
 function defaultOptimizerAssumptions() {
-  return {
-    feats:              true,
-    multiclass:         true,
-    magicBonus:         1,
-    shortRests:         2,
-    roundsPerEncounter: 4,
-    encountersPerDay:   4,
-    targetAC:           15,
-    targetSaveBonus:    4,
-    advantageRate:      0.25,
-    analysisLevel:      8,
-  };
+  // Spread to return a mutable copy of the shared defaults
+  return { ...DEFAULT_ASSUMPTIONS };
 }
 
 // =========================================================

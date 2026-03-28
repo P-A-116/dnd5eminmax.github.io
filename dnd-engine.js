@@ -24,6 +24,24 @@ export const BASE_AC              = 10;
 export const MIN_HIT_CHANCE       = 0.05; // Natural 1 always misses
 export const MAX_HIT_CHANCE       = 0.95; // Natural 20 always hits
 
+// Needed-roll clamp bounds for d20 checks.
+// A "needed roll" of 2 means any roll except a 1 hits; 19 means only a 20 hits
+// (natural 20 always hits / natural 1 always misses, enforced by MIN/MAX_HIT_CHANCE).
+export const NEEDED_ROLL_MIN = 2;
+export const NEEDED_ROLL_MAX = 19;
+
+// Effective-HP calculation: adjusts raw HP by how far AC deviates from baseline.
+// EHP = HP × (1 + (AC − EHP_AC_BASELINE) × EHP_AC_SCALAR)
+export const EHP_AC_BASELINE = 15;  // Typical enemy target AC in 5e
+export const EHP_AC_SCALAR   = 0.07; // HP multiplier per AC point above/below baseline
+
+// Default average for a d8 (the most common versatile weapon die), used as a
+// fallback when the weapon damage string cannot be parsed.
+export const DEFAULT_DIE_AVERAGE = 4.5; // (1 + 8) / 2
+
+// Default ability score used when a value is missing or invalid (10 = +0 modifier).
+export const DEFAULT_ABILITY_SCORE = 10;
+
 // =========================================================
 // Data Tables
 // =========================================================
@@ -162,7 +180,7 @@ export function getArmorClassEstimate(character, dexMod) {
     if (cls.armorType === "medium")    return 14 + clamp(dex, 0, 2) + shield + mag;
     if (cls.armorType === "light")     return 11 + dex + shield + mag;
     if (cls.armorType === "unarmored") {
-      const wisBonus = Math.max(modFromScore(character.abilities?.wis || 10), 0);
+      const wisBonus = Math.max(modFromScore(character.abilities?.wis || DEFAULT_ABILITY_SCORE), 0);
       return BASE_AC + dex + wisBonus;
     }
     return BASE_AC + dex;
@@ -210,7 +228,7 @@ export function effectiveHitChance(attackBonus, targetAC, advantageRate = 0) {
   const ac      = Number(targetAC) || 10;
   const advRate = clamp(advantageRate, 0, 1);
 
-  const needed       = clamp(ac - bonus, 2, 19);
+  const needed       = clamp(ac - bonus, NEEDED_ROLL_MIN, NEEDED_ROLL_MAX);
   const base         = clamp((D20_SIDES + 1 - needed) / D20_SIDES, MIN_HIT_CHANCE, MAX_HIT_CHANCE);
   const withAdvantage = 1 - Math.pow(1 - base, 2);
 
@@ -225,7 +243,7 @@ export function effectiveHitChance(attackBonus, targetAC, advantageRate = 0) {
 export function saveFailChance(saveDC, targetSaveBonus) {
   const dc    = Number(saveDC) || 10;
   const bonus = Number(targetSaveBonus) || 0;
-  const needed = clamp(dc - bonus, 2, 19);
+  const needed = clamp(dc - bonus, NEEDED_ROLL_MIN, NEEDED_ROLL_MAX);
   return clamp((needed - 1) / D20_SIDES, MIN_HIT_CHANCE, MAX_HIT_CHANCE);
 }
 
@@ -236,7 +254,7 @@ export function saveFailChance(saveDC, targetSaveBonus) {
 export function weaponAtkBonus(weapon, abilities, pb) {
   if (!weapon || !abilities) return 0;
   const abilityKey = validateAbilityKey(weapon.ability);
-  const mod        = modFromScore(abilities[abilityKey] || 10);
+  const mod        = modFromScore(abilities[abilityKey] || DEFAULT_ABILITY_SCORE);
   const prof       = weapon.proficient ? pb : 0;
   const magic      = validateMagicBonus(weapon.magicBonus);
   return mod + prof + magic;
@@ -250,12 +268,12 @@ export function weaponAvgDamage(weapon, abilities, pb) {
   if (!weapon || !abilities) return "0.0";
   try {
     const abilityKey = validateAbilityKey(weapon.ability);
-    const mod        = modFromScore(abilities[abilityKey] || 10);
+    const mod        = modFromScore(abilities[abilityKey] || DEFAULT_ABILITY_SCORE);
     const magicBonus = validateMagicBonus(weapon.magicBonus);
     const dmg        = String(weapon.damage || "1d8");
 
     const match    = dmg.match(/(\d+)d(\d+)/i);
-    let   diceAvg  = 4.5; // Default to d8 average
+    let   diceAvg  = DEFAULT_DIE_AVERAGE; // Fallback to d8 average when damage string is unparseable
 
     if (match) {
       const numDice = Number(match[1]) || 1;
@@ -289,6 +307,12 @@ if (typeof globalThis !== "undefined") {
     BASE_AC,
     MIN_HIT_CHANCE,
     MAX_HIT_CHANCE,
+    NEEDED_ROLL_MIN,
+    NEEDED_ROLL_MAX,
+    EHP_AC_BASELINE,
+    EHP_AC_SCALAR,
+    DEFAULT_DIE_AVERAGE,
+    DEFAULT_ABILITY_SCORE,
     // Validation helpers
     clamp,
     validateLevel,
