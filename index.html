@@ -1,17 +1,177 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>D&D 5E Min/Max Character Builder</title>
-    <link rel="stylesheet" href="styles.css">
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>D&amp;D 5e Min/Max Builder</title>
+  <link rel="stylesheet" href="./styles.css">
 </head>
 <body>
-    <h1>Welcome to D&D 5E Min/Max Character Builder</h1>
-    <h2>Character Builder</h2>
-    <div id="character-info">
-        <!-- Character information will be displayed here -->
+  <!-- Toolbar -->
+  <div id="toolbar">
+    <span id="app-title">D&amp;D 5e SRD Builder</span>
+    <div id="toolbar-btns">
+      <button id="btn-optimize" title="Generate optimal builds">⚡ Optimize</button>
+      <button id="btn-apply-top" title="Apply top result to builder">✔ Apply Top</button>
+      <button id="btn-export" title="Export JSON">⬇ Export</button>
+      <button id="btn-reset" title="Reset all">↺ Reset</button>
     </div>
-    <script src="app.js"></script>
+  </div>
+
+  <!-- Status bar -->
+  <div id="statusbar">
+    <span id="status-msg">Ready.</span>
+    <span id="status-pb"></span>
+    <span id="status-pp"></span>
+    <span id="status-init"></span>
+  </div>
+
+  <!-- Main two-column layout -->
+  <div id="layout">
+
+    <!-- LEFT: Builder -->
+    <div id="col-builder">
+
+      <!-- Identity row -->
+      <section class="panel" id="sec-identity">
+        <div class="panel-head">Identity</div>
+        <div class="identity-grid">
+          <label>Name<input id="f-name" type="text" autocomplete="off"></label>
+          <label>Player<input id="f-player" type="text" autocomplete="off"></label>
+          <label>Subclass<input id="f-subclass" type="text" autocomplete="off"></label>
+          <label>Class<select id="f-class"></select></label>
+          <label>Level<input id="f-level" type="number" min="1" max="20" value="1"></label>
+          <label>Race<select id="f-race"></select></label>
+          <label>Background<select id="f-background"></select></label>
+          <label>Alignment<select id="f-alignment"></select></label>
+        </div>
+      </section>
+
+      <!-- Abilities section -->
+      <section class="panel" id="sec-abilities">
+        <div class="panel-head">
+          Ability Scores
+          <span class="panel-head-right">
+            <select id="f-ability-mode">
+              <option value="standard">Standard Array</option>
+              <option value="pointbuy">Point Buy</option>
+              <option value="manual">Manual</option>
+            </select>
+            <button id="btn-std-array" title="Apply default standard array">Apply SA</button>
+            <button id="btn-auto-pb" title="Auto-assign point buy for objective">Auto PB</button>
+          </span>
+        </div>
+        <div id="pb-info" class="pb-info hidden"></div>
+        <table id="ability-table">
+          <thead><tr><th>Ability</th><th>Score</th><th>Mod</th><th>Save</th></tr></thead>
+          <tbody id="ability-tbody"></tbody>
+        </table>
+      </section>
+
+      <!-- Derived stats bar -->
+      <section class="panel" id="sec-derived">
+        <div class="panel-head">Derived Stats</div>
+        <div id="derived-stats" class="derived-row"></div>
+      </section>
+
+      <!-- Skills section -->
+      <section class="panel" id="sec-skills">
+        <div class="panel-head">Skills
+          <span class="panel-head-right"><button id="btn-clear-skills" title="Clear all proficiencies">Clear</button></span>
+        </div>
+        <table id="skills-table">
+          <thead><tr><th>Skill</th><th>Ability</th><th>Bonus</th><th>Prof</th><th>Exp</th></tr></thead>
+          <tbody id="skills-tbody"></tbody>
+        </table>
+      </section>
+
+      <!-- Weapons section -->
+      <section class="panel" id="sec-weapons">
+        <div class="panel-head">Weapons
+          <span class="panel-head-right"><button id="btn-add-weapon">+ Add</button></span>
+        </div>
+        <table id="weapons-table">
+          <thead><tr><th>Name</th><th>Ability</th><th>Dmg</th><th>+Mag</th><th>Prof</th><th>Atk</th><th>Avg</th><th></th></tr></thead>
+          <tbody id="weapons-tbody"></tbody>
+        </table>
+      </section>
+
+      <!-- Spellcasting section -->
+      <section class="panel" id="sec-spells">
+        <div class="panel-head">Spellcasting</div>
+        <div class="spell-row">
+          <label>Casting Ability<select id="f-cast-ability"></select></label>
+          <label>Spell Atk<span id="d-spell-atk" class="derived-val">—</span></label>
+          <label>Save DC<span id="d-spell-dc" class="derived-val">—</span></label>
+          <label><input type="checkbox" id="f-has-shield"> Shield</label>
+          <label>Armor +Mag<input id="f-armor-bonus" type="number" min="0" max="3" value="0" style="width:3rem"></label>
+        </div>
+        <div class="panel-head" style="margin-top:0.5rem">Spell Slots</div>
+        <table id="slots-table">
+          <thead><tr id="slots-head-row"></tr></thead>
+          <tbody><tr id="slots-body-row"></tr></tbody>
+        </table>
+        <div class="spell-row" style="margin-top:0.5rem">
+          <label style="flex:1">Known Spells<textarea id="f-known-spells" rows="2" placeholder="comma-separated or notes"></textarea></label>
+          <label style="flex:1">Prepared Spells<textarea id="f-prep-spells" rows="2" placeholder="comma-separated or notes"></textarea></label>
+        </div>
+      </section>
+
+      <!-- Notes / traits / features -->
+      <section class="panel" id="sec-notes">
+        <div class="panel-head">Notes &amp; Traits</div>
+        <div class="notes-grid">
+          <label>Features<textarea id="f-features" rows="3"></textarea></label>
+          <label>Traits<textarea id="f-traits" rows="3"></textarea></label>
+          <label>Notes<textarea id="f-notes" rows="3"></textarea></label>
+          <label>Equipment (comma-sep)<textarea id="f-equipment" rows="2"></textarea></label>
+        </div>
+      </section>
+
+    </div><!-- /col-builder -->
+
+    <!-- RIGHT: Optimizer + Analysis + Import/Export -->
+    <div id="col-optimizer">
+
+      <!-- Optimizer section -->
+      <section class="panel" id="sec-optimizer">
+        <div class="panel-head">Optimizer</div>
+        <div class="opt-row">
+          <label>Objective<select id="f-objective"></select></label>
+          <label>Rule Preset<select id="f-rule-preset"></select></label>
+          <label>Analysis Lvl<input id="f-analysis-level" type="number" min="1" max="20" value="8" style="width:3.5rem"></label>
+        </div>
+        <div class="panel-head" style="margin-top:0.5rem;font-size:0.7rem">Assumptions</div>
+        <div class="assumptions-grid" id="assumptions-grid"></div>
+      </section>
+
+      <!-- Current build metrics -->
+      <section class="panel" id="sec-metrics">
+        <div class="panel-head">Current Build Metrics</div>
+        <div id="metrics-grid" class="metrics-grid"></div>
+      </section>
+
+      <!-- Results -->
+      <section class="panel" id="sec-results">
+        <div class="panel-head">Top Builds
+          <span class="panel-head-right"><small id="results-note"></small></span>
+        </div>
+        <div id="results-list"></div>
+      </section>
+
+      <!-- Import / Export -->
+      <section class="panel" id="sec-io">
+        <div class="panel-head">Import / Export JSON</div>
+        <textarea id="f-import-text" rows="6" placeholder="Paste exported JSON here, then click Import…"></textarea>
+        <div class="io-btns">
+          <button id="btn-import">⬆ Import</button>
+          <button id="btn-export2">⬇ Export to clipboard</button>
+        </div>
+      </section>
+
+    </div><!-- /col-optimizer -->
+  </div><!-- /layout -->
+
+  <script src="./app.js"></script>
 </body>
 </html>
