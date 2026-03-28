@@ -9,6 +9,7 @@ import {
   ABILITIES, CLASSES,
   POINT_BUY_MAX_POINTS, POINT_BUY_MIN_SCORE, POINT_BUY_MAX_SCORE,
   MAX_MAGIC_BONUS, BASE_AC,
+  EHP_AC_BASELINE, EHP_AC_SCALAR,
   clamp, validateLevel, validateMagicBonus, validateClassKey, validateAbilityKey,
   modFromScore, proficiencyBonus, pointBuyCost,
   getClassData, getEstimatedHP, getArmorClassEstimate, getCasterAbility,
@@ -18,19 +19,24 @@ import {
 
 import { normalizeState, validateState } from "./validation.js";
 
+import {
+  AVG_DIE_FINESSE, AVG_DIE_HEAVY,
+  NOVA_BURST_BONUS_FACTOR, BURST_FACTOR_CAP, BURST_FACTOR_PER_REST,
+  DAMAGE_FEAT_BONUS, INITIATIVE_FEAT_BONUS,
+  BASE_SPELL_DC,
+  CONTROL_PRESSURE_PB_MULT, CONTROL_PRESSURE_BASE, CONTROL_CON_WEIGHT, CONTROL_NON_CASTER_FACTOR,
+  SKILL_ROGUE_BONUS_MULT, SKILL_BARD_BONUS_MULT,
+  STRENGTH_THRESHOLD_SUSTAINED_DPR, STRENGTH_THRESHOLD_NOVA_DPR,
+  STRENGTH_THRESHOLD_EFFECTIVE_HP, STRENGTH_THRESHOLD_CONTROL, STRENGTH_THRESHOLD_SKILL,
+  OBJECTIVE_WEIGHTS, OBJECTIVE_WEIGHTS_DEFAULT,
+} from "./optimizer-constants.js";
+
 // =========================================================
 // CONSTANTS - App-specific magic numbers
 // =========================================================
 const ABILITY_SCORE_MIN = 3;
 const ABILITY_SCORE_MAX = 20;
 const MAX_SPELL_LEVEL = 9;
-
-// Combat / optimizer calculation constants
-const BASE_SPELL_DC = 8;
-const AC_TO_HP_MULTIPLIER = 0.07; // How much each AC point affects effective HP
-const NOVA_BURST_BONUS = 0.6;
-const DAMAGE_FEAT_BONUS = 1.5;
-const INITIATIVE_FEAT_BONUS = 3;
 
 // ASI/Feat breakpoint levels
 const ASI_LEVELS = [4, 8, 12, 16, 19];
@@ -260,7 +266,7 @@ function evaluateBuildSnapshot(snapshot, assumptions, objective) {
 
     // Offensive capabilities
     const attackBonus = pb + primaryMod + validateMagicBonus(assumptions.magicBonus);
-    const avgDie = cls.weaponStyle === "dex" ? 4.5 : 5.5; // Finesse/ranged vs heavy weapons
+    const avgDie = cls.weaponStyle === "dex" ? AVG_DIE_FINESSE : AVG_DIE_HEAVY; // Finesse/ranged vs heavy weapons
     const attacks = estimateAttacksPerRound(snapshot.class, snapshot.level);
     const hitChance = effectiveHitChance(attackBonus, assumptions.targetAC, assumptions.advantageRate);
     const bonusDamage = cls.features?.bonusDamagePerAttack || 0;
@@ -269,8 +275,8 @@ function evaluateBuildSnapshot(snapshot, assumptions, objective) {
 
     // Nova/burst damage
     const hasShortRestAbilities = (cls.features?.burstUsesPerShortRest || 0) > 0;
-    const burstFactor = hasShortRestAbilities ? 1 + Math.min(0.75, assumptions.shortRests * 0.2) : 1;
-    const burstBonus = hasShortRestAbilities ? NOVA_BURST_BONUS : 0;
+    const burstFactor = hasShortRestAbilities ? 1 + Math.min(BURST_FACTOR_CAP, assumptions.shortRests * BURST_FACTOR_PER_REST) : 1;
+    const burstBonus = hasShortRestAbilities ? NOVA_BURST_BONUS_FACTOR : 0;
     const featBonus = snapshot.featPlan?.includes("damage_feat") ? DAMAGE_FEAT_BONUS : 0;
     const novaDpr = sustainedDpr * (1 + burstBonus) * burstFactor + featBonus;
 
@@ -281,7 +287,7 @@ function evaluateBuildSnapshot(snapshot, assumptions, objective) {
       hasShield: objective === "tank", 
       armorMagicBonus: assumptions.magicBonus 
     }, dexMod);
-    const effectiveHp = hp * (1 + (ac - 15) * AC_TO_HP_MULTIPLIER);
+    const effectiveHp = hp * (1 + (ac - EHP_AC_BASELINE) * EHP_AC_SCALAR);
 
     // Spellcasting metrics
     const casterAbility = cls.defaultCastingAbility || "int";
@@ -289,8 +295,8 @@ function evaluateBuildSnapshot(snapshot, assumptions, objective) {
     const spellAttack = pb + modFromScore(snapshot.abilities[casterAbility]) + validateMagicBonus(assumptions.magicBonus);
     const failChance = saveFailChance(spellDc, assumptions.targetSaveBonus);
     const controlPressure = cls.spellcasting
-      ? failChance * (10 + pb * 1.2) + (modFromScore(snapshot.abilities.con) * 0.6)
-      : failChance * 2;
+      ? failChance * (CONTROL_PRESSURE_BASE + pb * CONTROL_PRESSURE_PB_MULT) + (modFromScore(snapshot.abilities.con) * CONTROL_CON_WEIGHT)
+      : failChance * CONTROL_NON_CASTER_FACTOR;
 
     // Skill proficiency score
     const skillKeys = getSuggestedSkills(snapshot.class, objective);
@@ -298,7 +304,7 @@ function evaluateBuildSnapshot(snapshot, assumptions, objective) {
       const skill = SKILLS.find(s => s.key === k);
       if (!skill) return sum;
       return sum + modFromScore(snapshot.abilities[skill.ability]) + pb;
-    }, 0) + (snapshot.class === "rogue" ? pb * 1.5 : 0) + (snapshot.class === "bard" ? pb : 0);
+    }, 0) + (snapshot.class === "rogue" ? pb * SKILL_ROGUE_BONUS_MULT : 0) + (snapshot.class === "bard" ? pb * SKILL_BARD_BONUS_MULT : 0);
 
     // Concentration and initiative
     const concentrationScore = cls.spellcasting
@@ -308,14 +314,7 @@ function evaluateBuildSnapshot(snapshot, assumptions, objective) {
     const initiative = dexMod + initiativeBonus;
 
     // Calculate weighted score based on objective
-    const W = {
-      sustained_dpr: { sustainedDpr:1.4, novaDpr:0.4, effectiveHp:0.35, controlPressure:0.15, skillScore:0.1, concentrationScore:0.1, initiative:0.15 },
-      nova_dpr:      { sustainedDpr:0.7, novaDpr:1.5, effectiveHp:0.2,  controlPressure:0.1,  skillScore:0.05,concentrationScore:0.05,initiative:0.2 },
-      tank:          { sustainedDpr:0.35,novaDpr:0.15, effectiveHp:1.5,  controlPressure:0.2,  skillScore:0.05,concentrationScore:0.2, initiative:0.05 },
-      controller:    { sustainedDpr:0.25,novaDpr:0.25, effectiveHp:0.25, controlPressure:1.5,  skillScore:0.15,concentrationScore:0.4, initiative:0.2 },
-      skill:         { sustainedDpr:0.25,novaDpr:0.15, effectiveHp:0.2,  controlPressure:0.2,  skillScore:1.6, concentrationScore:0.1, initiative:0.2 },
-      balanced:      { sustainedDpr:0.8, novaDpr:0.5,  effectiveHp:0.6,  controlPressure:0.6,  skillScore:0.4, concentrationScore:0.2, initiative:0.2 },
-    }[objective] || { sustainedDpr:1,novaDpr:1,effectiveHp:1,controlPressure:1,skillScore:1,concentrationScore:1,initiative:1 };
+    const W = OBJECTIVE_WEIGHTS[objective] || OBJECTIVE_WEIGHTS_DEFAULT;
 
     const score = sustainedDpr*W.sustainedDpr + novaDpr*W.novaDpr + effectiveHp*W.effectiveHp +
       controlPressure*W.controlPressure + skillScore*W.skillScore + concentrationScore*W.concentrationScore + initiative*W.initiative;
@@ -411,12 +410,12 @@ function generateCandidateBuilds(config) {
         
         // Identify strengths
         const strengths = [];
-        if (finalStep.metrics.sustainedDpr >= 12) strengths.push("Strong sustained offense");
-        if (finalStep.metrics.novaDpr >= 18)      strengths.push("Strong burst potential");
-        if (finalStep.metrics.effectiveHp >= 70)  strengths.push("High durability");
-        if (finalStep.metrics.controlPressure >= 6) strengths.push("Strong control");
-        if (finalStep.metrics.skillScore >= 15)   strengths.push("High utility");
-        if (cls.tags.includes("short_rest"))       strengths.push("Short-rest efficient");
+        if (finalStep.metrics.sustainedDpr >= STRENGTH_THRESHOLD_SUSTAINED_DPR) strengths.push("Strong sustained offense");
+        if (finalStep.metrics.novaDpr >= STRENGTH_THRESHOLD_NOVA_DPR)            strengths.push("Strong burst potential");
+        if (finalStep.metrics.effectiveHp >= STRENGTH_THRESHOLD_EFFECTIVE_HP)    strengths.push("High durability");
+        if (finalStep.metrics.controlPressure >= STRENGTH_THRESHOLD_CONTROL)     strengths.push("Strong control");
+        if (finalStep.metrics.skillScore >= STRENGTH_THRESHOLD_SKILL)            strengths.push("High utility");
+        if (cls.tags.includes("short_rest"))                                      strengths.push("Short-rest efficient");
         
         // Identify tradeoffs
         const tradeoffs = [];
