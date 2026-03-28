@@ -4,27 +4,27 @@
    
    VERSION: 2.1 - Improved with better validation and error handling
    ========================================================= */
-"use strict";
+
+import {
+  ABILITIES, CLASSES,
+  POINT_BUY_MAX_POINTS, POINT_BUY_MIN_SCORE, POINT_BUY_MAX_SCORE,
+  MAX_MAGIC_BONUS,
+  clamp, validateLevel, validateMagicBonus, validateClassKey, validateAbilityKey,
+  modFromScore, proficiencyBonus, pointBuyCost,
+  getClassData, getEstimatedHP, getArmorClassEstimate, getCasterAbility,
+  estimateAttacksPerRound, effectiveHitChance, saveFailChance,
+  weaponAtkBonus, weaponAvgDamage,
+} from "./dnd-engine.js";
 
 // =========================================================
-// CONSTANTS - Extracted magic numbers for maintainability
+// CONSTANTS - App-specific magic numbers
 // =========================================================
-const POINT_BUY_MAX_POINTS = 27;
-const POINT_BUY_MIN_SCORE = 8;
-const POINT_BUY_MAX_SCORE = 15;
 const ABILITY_SCORE_MIN = 3;
 const ABILITY_SCORE_MAX = 20;
-const MAX_LEVEL = 20;
-const MIN_LEVEL = 1;
 const MAX_SPELL_LEVEL = 9;
-const MAX_MAGIC_BONUS = 5;
 
-// Combat calculation constants
-const D20_SIDES = 20;
-const BASE_AC = 10;
+// Combat / optimizer calculation constants
 const BASE_SPELL_DC = 8;
-const MIN_HIT_CHANCE = 0.05; // Natural 1 always misses
-const MAX_HIT_CHANCE = 0.95; // Natural 20 always hits
 const AC_TO_HP_MULTIPLIER = 0.07; // How much each AC point affects effective HP
 const NOVA_BURST_BONUS = 0.6;
 const DAMAGE_FEAT_BONUS = 1.5;
@@ -37,7 +37,8 @@ const MILESTONE_LEVELS = [1, 3, 5, 8, 11, 17, 20];
 // =========================================================
 // 1. Data / Constants
 // =========================================================
-const ABILITIES = ["str", "dex", "con", "int", "wis", "cha"];
+const CLASS_OPTIONS = Object.keys(CLASSES);
+
 const ABILITY_LABELS = { str: "Strength", dex: "Dexterity", con: "Constitution", int: "Intelligence", wis: "Wisdom", cha: "Charisma" };
 
 const STANDARD_ARRAY = [15, 14, 13, 12, 10, 8];
@@ -68,22 +69,6 @@ const SKILLS = [
   { key: "stealth",       label: "Stealth",          ability: "dex" },
   { key: "survival",      label: "Survival",         ability: "wis" },
 ];
-
-const CLASSES = {
-  barbarian: { label: "Barbarian", hitDie: 12, saveProficiencies: ["str","con"], armorType: "medium",   weaponStyle: "str", spellcasting: null,   defaultCastingAbility: null, tags: ["frontliner","durable","sustained_dpr"], features: { extraAttackLevel: 5, burstUsesPerShortRest: 0, bonusDamagePerAttack: 2 } },
-  bard:      { label: "Bard",      hitDie:  8, saveProficiencies: ["dex","cha"], armorType: "light",    weaponStyle: "dex", spellcasting: "full", defaultCastingAbility: "cha", tags: ["support","control","utility"],              features: { extraAttackLevel: null, burstUsesPerShortRest: 0, bonusDamagePerAttack: 0 } },
-  cleric:    { label: "Cleric",    hitDie:  8, saveProficiencies: ["wis","cha"], armorType: "medium",   weaponStyle: "str", spellcasting: "full", defaultCastingAbility: "wis", tags: ["support","control","durable"],              features: { extraAttackLevel: null, burstUsesPerShortRest: 0, bonusDamagePerAttack: 0 } },
-  druid:     { label: "Druid",     hitDie:  8, saveProficiencies: ["int","wis"], armorType: "medium",   weaponStyle: "dex", spellcasting: "full", defaultCastingAbility: "wis", tags: ["control","support","utility"],              features: { extraAttackLevel: null, burstUsesPerShortRest: 0, bonusDamagePerAttack: 0 } },
-  fighter:   { label: "Fighter",   hitDie: 10, saveProficiencies: ["str","con"], armorType: "heavy",    weaponStyle: "str", spellcasting: null,   defaultCastingAbility: null, tags: ["frontliner","sustained_dpr","nova_dpr","tank"], features: { extraAttackLevel: 5, burstUsesPerShortRest: 1, bonusDamagePerAttack: 0 } },
-  monk:      { label: "Monk",      hitDie:  8, saveProficiencies: ["str","dex"], armorType: "unarmored",weaponStyle: "dex", spellcasting: null,   defaultCastingAbility: null, tags: ["mobile","sustained_dpr","skirmisher"],      features: { extraAttackLevel: 5, burstUsesPerShortRest: 0, bonusDamagePerAttack: 0 } },
-  paladin:   { label: "Paladin",   hitDie: 10, saveProficiencies: ["wis","cha"], armorType: "heavy",    weaponStyle: "str", spellcasting: "half", defaultCastingAbility: "cha", tags: ["nova_dpr","tank","support"],                features: { extraAttackLevel: 5, burstUsesPerShortRest: 0, bonusDamagePerAttack: 0 } },
-  ranger:    { label: "Ranger",    hitDie: 10, saveProficiencies: ["str","dex"], armorType: "medium",   weaponStyle: "dex", spellcasting: "half", defaultCastingAbility: "wis", tags: ["sustained_dpr","utility","ranged"],         features: { extraAttackLevel: 5, burstUsesPerShortRest: 0, bonusDamagePerAttack: 1 } },
-  rogue:     { label: "Rogue",     hitDie:  8, saveProficiencies: ["dex","int"], armorType: "light",    weaponStyle: "dex", spellcasting: null,   defaultCastingAbility: null, tags: ["nova_dpr","skills","initiative"],            features: { extraAttackLevel: null, burstUsesPerShortRest: 0, bonusDamagePerAttack: 3 } },
-  sorcerer:  { label: "Sorcerer",  hitDie:  6, saveProficiencies: ["con","cha"], armorType: "light",    weaponStyle: "dex", spellcasting: "full", defaultCastingAbility: "cha", tags: ["blaster","control","concentration"],        features: { extraAttackLevel: null, burstUsesPerShortRest: 0, bonusDamagePerAttack: 0 } },
-  warlock:   { label: "Warlock",   hitDie:  8, saveProficiencies: ["wis","cha"], armorType: "light",    weaponStyle: "dex", spellcasting: "pact", defaultCastingAbility: "cha", tags: ["sustained_dpr","blaster","short_rest"],     features: { extraAttackLevel: null, burstUsesPerShortRest: 1, bonusDamagePerAttack: 0 } },
-  wizard:    { label: "Wizard",    hitDie:  6, saveProficiencies: ["int","wis"], armorType: "light",    weaponStyle: "dex", spellcasting: "full", defaultCastingAbility: "int", tags: ["control","blaster","utility"],              features: { extraAttackLevel: null, burstUsesPerShortRest: 0, bonusDamagePerAttack: 0 } },
-};
-const CLASS_OPTIONS = Object.keys(CLASSES);
 
 const RACES = ["Human","Dwarf","Elf","Halfling","Dragonborn","Gnome","Half-Elf","Half-Orc","Tiefling","Custom / Lineage"];
 const BACKGROUNDS = ["Acolyte","Criminal","Folk Hero","Noble","Sage","Soldier","Artisan","Entertainer","Hermit","Custom"];
@@ -123,7 +108,7 @@ const DEFAULT_SPELL_SLOTS = () => ({ 1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0, 7: 0, 8
 const STORAGE_KEY = "dnd5e_srd_safe_builder_v2_optimizer";
 
 // =========================================================
-// 2. Input Validation & Sanitization
+// 2. Input Validation & Sanitization (app-specific)
 // =========================================================
 
 /**
@@ -140,15 +125,6 @@ function validateAbilityScore(score, mode) {
 }
 
 /**
- * Validates a level value
- */
-function validateLevel(level) {
-  const num = Number(level);
-  if (isNaN(num)) return MIN_LEVEL;
-  return clamp(num, MIN_LEVEL, MAX_LEVEL);
-}
-
-/**
  * Validates a spell slot level
  */
 function validateSpellSlot(slot) {
@@ -157,209 +133,8 @@ function validateSpellSlot(slot) {
   return Math.min(num, MAX_SPELL_LEVEL);
 }
 
-/**
- * Validates magic bonus
- */
-function validateMagicBonus(bonus) {
-  const num = Number(bonus);
-  if (isNaN(num) || num < 0) return 0;
-  return Math.min(num, MAX_MAGIC_BONUS);
-}
-
-/**
- * Validates that a class key exists
- */
-function validateClassKey(key) {
-  return CLASS_OPTIONS.includes(key) ? key : "fighter";
-}
-
-/**
- * Validates that an ability key exists
- */
-function validateAbilityKey(key) {
-  return ABILITIES.includes(key) ? key : "str";
-}
-
 // =========================================================
-// 3. Rules Math (with null safety)
-// =========================================================
-
-function modFromScore(score) { 
-  const num = Number(score);
-  if (isNaN(num)) return 0;
-  return Math.floor((num - 10) / 2); 
-}
-
-function proficiencyBonus(level) { 
-  const lvl = validateLevel(level);
-  return Math.floor((lvl - 1) / 4) + 2; 
-}
-
-function clamp(n, min, max) { 
-  const num = Number(n);
-  if (isNaN(num)) return min;
-  return Math.max(min, Math.min(max, num)); 
-}
-
-/**
- * Calculate point buy cost for a given score
- * Scores below 8 or above 15 return maximum cost
- */
-function pointBuyCost(s) { 
-  const score = Number(s);
-  if (isNaN(score) || score < POINT_BUY_MIN_SCORE) return 0;
-  if (score > POINT_BUY_MAX_SCORE) return 9;
-  
-  const costTable = [0,0,0,0,0,0,0,0,0,1,2,3,4,5,7,9];
-  return costTable[score] || 0;
-}
-
-/**
- * Safely get class data with fallback
- */
-function getClassData(key) { 
-  const validKey = validateClassKey(key);
-  return CLASSES[validKey]; 
-}
-
-/**
- * Calculate estimated HP for a character
- */
-function getEstimatedHP(level, classKey, conMod) {
-  const hd = getClassData(classKey).hitDie;
-  const lvl = validateLevel(level);
-  const con = Number(conMod) || 0;
-  
-  if (lvl <= 1) return hd + con;
-  
-  const avgRoll = Math.floor(hd / 2) + 1;
-  return hd + con + (lvl - 1) * (avgRoll + con);
-}
-
-/**
- * Estimate armor class based on character and equipment
- */
-function getArmorClassEstimate(character, dexMod) {
-  try {
-    const cls = getClassData(character.class);
-    const shield = character.hasShield ? 2 : 0;
-    const mag = validateMagicBonus(character.armorMagicBonus);
-    const dex = Number(dexMod) || 0;
-    
-    if (cls.armorType === "heavy")    return 16 + shield + mag;
-    if (cls.armorType === "medium")   return 14 + clamp(dex, 0, 2) + shield + mag;
-    if (cls.armorType === "light")    return 11 + dex + shield + mag;
-    if (cls.armorType === "unarmored") {
-      const wisBonus = Math.max(modFromScore(character.abilities?.wis || 10), 0);
-      return BASE_AC + dex + wisBonus;
-    }
-    return BASE_AC + dex;
-  } catch (error) {
-    console.error("Error calculating AC:", error);
-    return BASE_AC;
-  }
-}
-
-/**
- * Get the casting ability for a character with fallback
- */
-function getCasterAbility(character) {
-  if (!character || !character.spellcasting) return "int";
-  
-  const specified = character.spellcasting.castingAbility;
-  if (specified && ABILITIES.includes(specified)) return specified;
-  
-  const classDefault = getClassData(character.class).defaultCastingAbility;
-  return classDefault || "int";
-}
-
-/**
- * Estimate number of attacks per round based on class and level
- */
-function estimateAttacksPerRound(classKey, level) {
-  try {
-    const cls = getClassData(classKey);
-    const lvl = validateLevel(level);
-    
-    if (!cls.features || !cls.features.extraAttackLevel) return 1;
-    return lvl >= cls.features.extraAttackLevel ? 2 : 1;
-  } catch (error) {
-    console.error("Error estimating attacks:", error);
-    return 1;
-  }
-}
-
-/**
- * Calculate effective hit chance including advantage
- */
-function effectiveHitChance(attackBonus, targetAC, advantageRate = 0) {
-  const bonus = Number(attackBonus) || 0;
-  const ac = Number(targetAC) || 10;
-  const advRate = clamp(advantageRate, 0, 1);
-  
-  const needed = clamp(ac - bonus, 2, 19);
-  const base = clamp((D20_SIDES + 1 - needed) / D20_SIDES, MIN_HIT_CHANCE, MAX_HIT_CHANCE);
-  const withAdvantage = 1 - Math.pow(1 - base, 2);
-  
-  return base * (1 - advRate) + withAdvantage * advRate;
-}
-
-/**
- * Calculate chance of target failing a saving throw
- */
-function saveFailChance(saveDC, targetSaveBonus) {
-  const dc = Number(saveDC) || 10;
-  const bonus = Number(targetSaveBonus) || 0;
-  
-  const needed = clamp(dc - bonus, 2, 19);
-  return clamp((needed - 1) / D20_SIDES, MIN_HIT_CHANCE, MAX_HIT_CHANCE);
-}
-
-/**
- * Calculate weapon attack bonus
- */
-function weaponAtkBonus(weapon, abilities, pb) {
-  if (!weapon || !abilities) return 0;
-  
-  const abilityKey = validateAbilityKey(weapon.ability);
-  const mod = modFromScore(abilities[abilityKey] || 10);
-  const prof = weapon.proficient ? pb : 0;
-  const magic = validateMagicBonus(weapon.magicBonus);
-  
-  return mod + prof + magic;
-}
-
-/**
- * Calculate average weapon damage with error handling for damage string parsing
- */
-function weaponAvgDamage(weapon, abilities, pb) {
-  if (!weapon || !abilities) return "0.0";
-  
-  try {
-    const abilityKey = validateAbilityKey(weapon.ability);
-    const mod = modFromScore(abilities[abilityKey] || 10);
-    const magicBonus = validateMagicBonus(weapon.magicBonus);
-    const dmg = String(weapon.damage || "1d8");
-    
-    // Parse dice notation (e.g., "2d6", "1d8+3")
-    const match = dmg.match(/(\d+)d(\d+)/i);
-    let diceAvg = 4.5; // Default to d8 average
-    
-    if (match) { 
-      const numDice = Number(match[1]) || 1;
-      const dieSize = Number(match[2]) || 8;
-      diceAvg = numDice * ((dieSize + 1) / 2); 
-    }
-    
-    return (diceAvg + mod + magicBonus).toFixed(1);
-  } catch (error) {
-    console.error("Error calculating weapon damage:", error, weapon);
-    return "0.0";
-  }
-}
-
-// =========================================================
-// 4. Optimizer Logic
+// 3. Optimizer Logic
 // =========================================================
 
 /**
@@ -682,7 +457,7 @@ function generateCandidateBuilds(config) {
 }
 
 // =========================================================
-// 5. State Model
+// 4. State Model
 // =========================================================
 
 /**
@@ -842,7 +617,7 @@ function hydrateCharacter(raw) {
 }
 
 // =========================================================
-// 6. Persistence (with error handling)
+// 5. Persistence (with error handling)
 // =========================================================
 
 let _saveTimer = null;
@@ -882,7 +657,7 @@ function loadFromStorage() {
 }
 
 // =========================================================
-// 7. App State
+// 6. App State
 // =========================================================
 let state = loadFromStorage();
 
@@ -898,7 +673,7 @@ function setStatus(msg, warn) {
 }
 
 // =========================================================
-// 8. DOM Helpers
+// 7. DOM Helpers
 // =========================================================
 function qs(sel) { return document.querySelector(sel); }
 
@@ -922,7 +697,7 @@ function fmtMod(n) { return n >= 0 ? "+" + n : String(n); }
 function fmtFixed(n, d=1) { return Number(n).toFixed(d); }
 
 // =========================================================
-// 9. Render Functions
+// 8. Render Functions
 // =========================================================
 
 // --- Identity ---
@@ -1205,7 +980,7 @@ function render() {
 }
 
 // =========================================================
-// 10. Event Wiring
+// 9. Event Wiring
 // =========================================================
 function wireEvents() {
   // Identity text inputs
@@ -1515,7 +1290,7 @@ function exportJson() {
 }
 
 // =========================================================
-// 11. Boot
+// 10. Boot
 // =========================================================
 document.addEventListener("DOMContentLoaded", () => {
   try {
