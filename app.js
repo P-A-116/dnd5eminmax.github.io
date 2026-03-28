@@ -99,6 +99,7 @@ function modFromScore(score) { return Math.floor((Number(score || 10) - 10) / 2)
 function proficiencyBonus(level) { return Math.floor((Number(level || 1) - 1) / 4) + 2; }
 function clamp(n, min, max) { return Math.max(min, Math.min(max, n)); }
 function pointBuyCost(s) { const t = [0,0,0,0,0,0,0,0,0,1,2,3,4,5,7,9]; return t[clamp(Number(s),0,15)] || 0; }
+function abilityScoreBounds(mode) { return mode === "pointbuy" ? { min: 8, max: 15 } : { min: 3, max: 20 }; }
 
 function getClassData(key) { return CLASSES[key] || CLASSES.fighter; }
 
@@ -458,6 +459,7 @@ function renderAbilities() {
   const tbody = document.getElementById("ability-tbody");
   if (!tbody) return;
   tbody.innerHTML = "";
+  const { min: abMin, max: abMax } = abilityScoreBounds(state.abilityMode);
   ABILITIES.forEach(ab => {
     const score = state.abilities[ab];
     const mod = modFromScore(score);
@@ -466,7 +468,7 @@ function renderAbilities() {
     const tr = document.createElement("tr");
     tr.innerHTML = `
       <td>${ABILITY_LABELS[ab]}</td>
-      <td><input type="number" min="3" max="20" value="${score}" data-ab="${ab}"></td>
+      <td><input type="number" min="${abMin}" max="${abMax}" value="${score}" data-ab="${ab}"></td>
       <td class="mod-cell">${fmtMod(mod)}</td>
       <td class="save-cell ${saveProf ? "save-prof" : ""}">${fmtMod(saveMod)}${saveProf ? " ●" : ""}</td>
     `;
@@ -609,7 +611,7 @@ function renderNotes() {
 // --- Optimizer section ---
 const ASSUMPTION_FIELDS = [
   { key: "targetAC",          label: "Target AC",        type: "number", min: 10, max: 25 },
-  { key: "targetSaveBonus",   label: "Target Save",      type: "number", min: 0,  max: 12 },
+  { key: "targetSaveBonus",   label: "Target Save",      type: "number", min: -5, max: 12 },
   { key: "advantageRate",     label: "Adv Rate (0–1)",   type: "number", min: 0,  max: 1, step: 0.05 },
   { key: "magicBonus",        label: "Magic Bonus",      type: "number", min: 0,  max: 3 },
   { key: "shortRests",        label: "Short Rests/Day",  type: "number", min: 0,  max: 6 },
@@ -754,8 +756,7 @@ function wireEvents() {
   document.getElementById("ability-tbody").addEventListener("change", e => {
     const ab = e.target.dataset.ab;
     if (!ab) return;
-    const min = state.abilityMode === "pointbuy" ? 8 : 3;
-    const max = state.abilityMode === "pointbuy" ? 20 : 20;
+    const { min, max } = abilityScoreBounds(state.abilityMode);
     state.abilities[ab] = clamp(Number(e.target.value) || 8, min, max);
     e.target.value = state.abilities[ab];
     renderAbilities(); renderDerived(); renderSkills(); renderWeapons(); renderMetrics();
