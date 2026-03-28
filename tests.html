@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>D&amp;D 5e Engine – Unit Tests</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: system-ui, sans-serif;
+      background: #1a1a2e;
+      color: #e0e0e0;
+      padding: 2rem;
+      line-height: 1.6;
+    }
+
+    h1 {
+      font-size: 1.5rem;
+      margin-bottom: 1rem;
+      color: #c9a84c;
+    }
+
+    .summary {
+      display: inline-block;
+      font-size: 1.1rem;
+      font-weight: bold;
+      padding: 0.4rem 1rem;
+      border-radius: 4px;
+      margin-bottom: 1.5rem;
+    }
+
+    .summary.pass { background: #1e4d2b; color: #6fcf97; border: 1px solid #6fcf97; }
+    .summary.fail { background: #4d1e1e; color: #eb5757; border: 1px solid #eb5757; }
+    .summary.pending { background: #2e2e2e; color: #aaa; border: 1px solid #555; }
+
+    #results {
+      list-style: none;
+      max-width: 800px;
+    }
+
+    #results li {
+      padding: 0.3rem 0.6rem;
+      border-left: 3px solid transparent;
+      margin-bottom: 2px;
+      border-radius: 2px;
+      font-size: 0.92rem;
+    }
+
+    #results li.pass {
+      border-left-color: #6fcf97;
+      background: #0d1f16;
+      color: #b7e8c8;
+    }
+
+    #results li.fail {
+      border-left-color: #eb5757;
+      background: #1f0d0d;
+      color: #f2b0b0;
+    }
+
+    .detail {
+      color: #ffb347;
+      font-style: italic;
+    }
+  </style>
+</head>
+<body>
+  <h1>D&amp;D 5e Engine – Unit Tests</h1>
+  <div id="summary" class="summary pending">Running…</div>
+  <ul id="results"></ul>
+  <script type="module" src="./test-engine.js"></script>
+</body>
+</html>
