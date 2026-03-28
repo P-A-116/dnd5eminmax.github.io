@@ -322,7 +322,8 @@ function evaluateBuildSnapshot(snapshot, assumptions, objective) {
       hasShield: objective === "tank", 
       armorMagicBonus: armorMagic,
     }, dexMod);
-    const effectiveHp = hp * (1 + (ac - EHP_AC_BASELINE) * EHP_AC_SCALAR);
+    const acDelta = Math.min(ac - EHP_AC_BASELINE, 10);
+    const effectiveHp = hp * (1 + acDelta * EHP_AC_SCALAR);
 
     // Spellcasting metrics
     const casterAbility = cls.defaultCastingAbility || "int";
@@ -338,7 +339,7 @@ function evaluateBuildSnapshot(snapshot, assumptions, objective) {
         return sum + (Number(count) || 0) * weight;
       }, 0);
       const attemptsPerEncounter = weightedSlots / Math.max(1, assumptions.encountersPerDay || 4);
-      controlPressure = failChance * attemptsPerEncounter * pb;
+      controlPressure = failChance * attemptsPerEncounter;
     }
     // Non-casters: no save-forcing control in base model (near zero)
 
@@ -400,11 +401,17 @@ function buildMilestonePlan(baseClass, objective, assumptions) {
         const canTakeFeat = assumptions.feats;
 
         // Pick the most appropriate feat for this class/objective/slot
-        const wantsDmgFeat = canTakeFeat && ["sustained_dpr","nova_dpr"].includes(objective) && idx === 0;
-        const wantsInitFeat = canTakeFeat && objective === "controller" && idx === 0;
+        const wantsDmgFeat  = canTakeFeat && ["sustained_dpr","nova_dpr"].includes(objective) && idx === 0;
+        // Alert at ASI 2 (level 8) so the primary casting stat is boosted first at ASI 1.
+        const wantsInitFeat = canTakeFeat && objective === "controller" && idx === 1;
+        // PAM at ASI 2 for str melee sustained-DPR builds (GWM taken first at ASI 1).
+        const wantsPamFeat  = (canTakeFeat && objective === "sustained_dpr" && weaponStyle === "str"
+                               && idx === 1 && featPlan.includes("gwm"));
 
         if (wantsInitFeat) {
           featPlan.push("alert");
+        } else if (wantsPamFeat) {
+          featPlan.push("pam");
         } else if (wantsDmgFeat) {
           // Choose the damage feat appropriate for this weapon style
           if (weaponStyle === "str") {
