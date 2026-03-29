@@ -8,9 +8,11 @@
 import {
   ABILITIES, CLASSES,
   POINT_BUY_MAX_POINTS, POINT_BUY_MIN_SCORE, POINT_BUY_MAX_SCORE,
+  ABILITY_SCORE_MIN, ABILITY_SCORE_MAX,
   MAX_MAGIC_BONUS, BASE_AC,
   EHP_AC_BASELINE, EHP_AC_SCALAR,
   clamp, validateLevel, validateMagicBonus, validateClassKey, validateAbilityKey,
+  escHtml,
   modFromScore, proficiencyBonus, pointBuyCost,
   getClassData, getEstimatedHP, getArmorClassEstimate, getCasterAbility,
   estimateAttacksPerRound, effectiveHitChance, saveFailChance,
@@ -40,8 +42,6 @@ import {
 // =========================================================
 // CONSTANTS - App-specific magic numbers
 // =========================================================
-const ABILITY_SCORE_MIN = 3;
-const ABILITY_SCORE_MAX = 20;
 const MAX_SPELL_LEVEL = 9;
 
 // ASI/Feat breakpoint levels
@@ -199,39 +199,21 @@ function autoAssignPointBuy(classKey, objective) {
     : cls.defaultCastingAbility && cls.defaultCastingAbility !== primary ? cls.defaultCastingAbility
     : "wis";
   
-  // Initialize all scores to minimum
-  const scores = { str: 8, dex: 8, con: 8, int: 8, wis: 8, cha: 8 };
-  
-  // Create priority list
-  const priorities = [primary, secondary, tertiary, ...ABILITIES.filter(a => ![primary,secondary,tertiary].includes(a))];
-  const targets = [15, 14, 13, 12, 10, 8];
-  
-  // Apply initial distribution
-  priorities.forEach((ab, i) => { 
-    scores[ab] = targets[i] !== undefined ? targets[i] : 8; 
-  });
-  
-  // Balance to exactly 27 points
-  let cost = ABILITIES.reduce((s, a) => s + pointBuyCost(scores[a]), 0);
-  
-  // Reduce if over budget (shouldn't happen with standard targets, but safety check)
-  while (cost > POINT_BUY_MAX_POINTS) {
-    const reducible = priorities.slice().reverse().find(a => scores[a] > POINT_BUY_MIN_SCORE && a !== primary);
-    if (!reducible) break;
-    scores[reducible]--;
-    cost = ABILITIES.reduce((s, a) => s + pointBuyCost(scores[a]), 0);
-  }
-  
-  // Spend remaining points
-  while (cost < POINT_BUY_MAX_POINTS) {
-    const upgradable = priorities.find(a => {
-      if (scores[a] >= POINT_BUY_MAX_SCORE) return false;
-      const increase = pointBuyCost(scores[a] + 1) - pointBuyCost(scores[a]);
-      return increase <= (POINT_BUY_MAX_POINTS - cost);
-    });
-    if (!upgradable) break;
-    cost += pointBuyCost(scores[upgradable] + 1) - pointBuyCost(scores[upgradable]);
-    scores[upgradable]++;
+  const priorities = [primary, secondary, tertiary,
+    ...ABILITIES.filter(a => ![primary, secondary, tertiary].includes(a))];
+
+  // Greedy allocation: start all scores at minimum, spend budget on
+  // highest-priority stats first.
+  const scores = Object.fromEntries(ABILITIES.map(a => [a, POINT_BUY_MIN_SCORE]));
+  let remaining = POINT_BUY_MAX_POINTS;
+
+  for (const ab of priorities) {
+    while (scores[ab] < POINT_BUY_MAX_SCORE && remaining > 0) {
+      const cost = pointBuyCost(scores[ab] + 1) - pointBuyCost(scores[ab]);
+      if (cost > remaining) break;
+      scores[ab]++;
+      remaining -= cost;
+    }
   }
   
   return scores;
@@ -387,14 +369,17 @@ function buildMilestonePlan(baseClass, objective, assumptions) {
   try {
     const analysisLevel = validateLevel(assumptions.analysisLevel);
     const milestones = MILESTONE_LEVELS.filter(n => n <= analysisLevel);
-    
+    const primary = getPrimaryAbilityForObjective(baseClass, objective);
+    const caster = getClassData(baseClass).defaultCastingAbility;
+    const weaponStyle = getClassData(baseClass).weaponStyle;
+
+    // Compute base scores once — not per-milestone
+    const baseAbilities = autoAssignPointBuy(baseClass, objective);
+
     return milestones.map(level => {
-      const abilities = autoAssignPointBuy(baseClass, objective);
+      const abilities = { ...baseAbilities };
       const featPlan = [];
       const asiLevels = ASI_LEVELS.filter(n => n <= level);
-      const primary = getPrimaryAbilityForObjective(baseClass, objective);
-      const caster = getClassData(baseClass).defaultCastingAbility;
-      const weaponStyle = getClassData(baseClass).weaponStyle;
       
       // Simulate ASI/feat choices
       asiLevels.forEach((_, idx) => {
@@ -443,7 +428,7 @@ function buildMilestonePlan(baseClass, objective, assumptions) {
 
       // Include estimated spell slots so control pressure and burst compute correctly
       const estimatedSlots = estimateSpellSlots(baseClass, level);
-      const castAbility = getClassData(baseClass).defaultCastingAbility || "int";
+      const castAbility = caster || "int";
       const snapshot = {
         class: baseClass,
         level,
@@ -519,27 +504,6 @@ function buildOneClassResult(classKey, objective, assumptions) {
   } catch (error) {
     console.error(`Error generating build for ${classKey}:`, error);
     return null;
-  }
-}
-
-/**
- * Generate optimized candidate builds for all classes
- * Returns sorted array of build recommendations
- */
-function generateCandidateBuilds(config) {
-  try {
-    const { objective, assumptions, classPool } = config;
-    const pool = classPool && classPool.length ? classPool : CLASS_OPTIONS;
-
-    const results = pool
-      .map(classKey => buildOneClassResult(classKey, objective, assumptions))
-      .filter(r => r !== null);
-
-    // Filter out failed builds and sort by score
-    return results.sort((a, b) => b.score - a.score);
-  } catch (error) {
-    console.error("Error generating candidate builds:", error);
-    return [];
   }
 }
 
@@ -631,8 +595,17 @@ function scheduleSave() {
       const json = JSON.stringify(normalized);
       localStorage.setItem(STORAGE_KEY, json);
     } catch (e) {
-      console.error("Save failed:", e);
-      setStatus("⚠ Save failed: " + e.message, true);
+      if (e.name === 'QuotaExceededError') {
+        // Save without optimizer results to fit within quota
+        try {
+          const minimal = normalizeState(state);
+          localStorage.setItem(STORAGE_KEY, JSON.stringify(minimal));
+        } catch { /* ignore secondary failure */ }
+        setStatus("⚠ Storage full — results not saved", true);
+      } else {
+        console.error("Save failed:", e);
+        setStatus("⚠ Save failed: " + e.message, true);
+      }
     }
   }, 400);
 }
@@ -940,6 +913,12 @@ function renderOptimizer() {
 }
 
 // --- Current build metrics ---
+let _metricsTimer = null;
+function scheduleMetricsUpdate() {
+  clearTimeout(_metricsTimer);
+  _metricsTimer = setTimeout(renderMetrics, 60);
+}
+
 function renderMetrics() {
   try {
     const snapshot = { class: state.class, level: Number(state.level), abilities: state.abilities, featPlan: [] };
@@ -1006,10 +985,6 @@ function renderResults() {
   });
 }
 
-function escHtml(s) {
-  return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
-}
-
 // --- Full render ---
 function render() {
   renderIdentity();
@@ -1035,7 +1010,7 @@ function wireEvents() {
   document.getElementById("f-level").addEventListener("change", e => {
     state.level = validateLevel(e.target.value);
     e.target.value = state.level; // Update display with validated value
-    renderAbilities(); renderDerived(); renderSkills(); renderWeapons(); renderMetrics();
+    renderAbilities(); renderDerived(); renderSkills(); renderWeapons(); scheduleMetricsUpdate();
     scheduleSave();
   });
   document.getElementById("f-class").addEventListener("change", e => {
@@ -1043,7 +1018,7 @@ function wireEvents() {
     // auto-update casting ability to class default
     const def = getClassData(state.class).defaultCastingAbility;
     if (def) state.spellcasting.castingAbility = def;
-    renderAbilities(); renderDerived(); renderSkills(); renderWeapons(); renderSpellSlots(); renderMetrics();
+    renderAbilities(); renderDerived(); renderSkills(); renderWeapons(); renderSpellSlots(); scheduleMetricsUpdate();
     scheduleSave();
   });
   document.getElementById("f-race").addEventListener("change", e => { state.identity.race = e.target.value; scheduleSave(); });
@@ -1062,7 +1037,7 @@ function wireEvents() {
     if (!ab) return;
     state.abilities[ab] = validateAbilityScore(e.target.value, state.abilityMode);
     e.target.value = state.abilities[ab]; // Update display with validated value
-    renderAbilities(); renderDerived(); renderSkills(); renderWeapons(); renderMetrics();
+    renderAbilities(); renderDerived(); renderSkills(); renderWeapons(); scheduleMetricsUpdate();
     scheduleSave();
   });
 
@@ -1071,7 +1046,7 @@ function wireEvents() {
     const arr = [...STANDARD_ARRAY];
     ABILITIES.forEach((a, i) => state.abilities[a] = arr[i]);
     state.abilityMode = "standard";
-    renderAbilities(); renderDerived(); renderSkills(); renderWeapons(); renderMetrics();
+    renderAbilities(); renderDerived(); renderSkills(); renderWeapons(); scheduleMetricsUpdate();
     scheduleSave();
   });
 
@@ -1081,7 +1056,7 @@ function wireEvents() {
       const scores = autoAssignPointBuy(state.class, state.optimizer.objective);
       Object.assign(state.abilities, scores);
       state.abilityMode = "pointbuy";
-      renderAbilities(); renderDerived(); renderSkills(); renderWeapons(); renderMetrics();
+      renderAbilities(); renderDerived(); renderSkills(); renderWeapons(); scheduleMetricsUpdate();
       setStatus("Auto Point Buy applied.");
       scheduleSave();
     } catch (error) {
@@ -1098,13 +1073,13 @@ function wireEvents() {
     if (!state.skills[key]) state.skills[key] = { proficient: false, expertise: false };
     state.skills[key][field] = e.target.checked;
     if (field === "expertise" && e.target.checked) state.skills[key].proficient = true;
-    renderSkills(); renderDerived(); renderMetrics();
+    renderSkills(); renderDerived(); scheduleMetricsUpdate();
     scheduleSave();
   });
 
   document.getElementById("btn-clear-skills").addEventListener("click", () => {
     state.skills = DEFAULT_SKILLS_STATE();
-    renderSkills(); renderDerived(); renderMetrics();
+    renderSkills(); renderDerived(); scheduleMetricsUpdate();
     scheduleSave();
   });
 
@@ -1152,18 +1127,18 @@ function wireEvents() {
 
   document.getElementById("f-cast-ability").addEventListener("change", e => {
     state.spellcasting.castingAbility = validateAbilityKey(e.target.value);
-    renderDerived(); renderMetrics(); scheduleSave();
+    renderDerived(); scheduleMetricsUpdate(); scheduleSave();
   });
 
   document.getElementById("f-has-shield").addEventListener("change", e => {
     state.hasShield = e.target.checked;
-    renderDerived(); renderMetrics(); scheduleSave();
+    renderDerived(); scheduleMetricsUpdate(); scheduleSave();
   });
 
   document.getElementById("f-armor-bonus").addEventListener("change", e => {
     state.armorMagicBonus = validateMagicBonus(e.target.value);
     e.target.value = state.armorMagicBonus;
-    renderDerived(); renderMetrics(); scheduleSave();
+    renderDerived(); scheduleMetricsUpdate(); scheduleSave();
   });
 
   // Known / prepared spells (textarea stored in spellcasting)
@@ -1188,7 +1163,7 @@ function wireEvents() {
   // Optimizer controls
   document.getElementById("f-objective").addEventListener("change", e => {
     state.optimizer.objective = e.target.value;
-    renderMetrics(); scheduleSave();
+    scheduleMetricsUpdate(); scheduleSave();
   });
   document.getElementById("f-rule-preset").addEventListener("change", e => {
     const key = e.target.value;
@@ -1196,7 +1171,7 @@ function wireEvents() {
     if (preset) {
       state.optimizer.rulePreset = key;
       state.optimizer.assumptions = { ...state.optimizer.assumptions, ...preset, analysisLevel: state.optimizer.assumptions.analysisLevel };
-      renderOptimizer(); renderMetrics(); scheduleSave();
+      renderOptimizer(); scheduleMetricsUpdate(); scheduleSave();
     }
   });
   document.getElementById("f-analysis-level").addEventListener("change", e => {
@@ -1211,7 +1186,7 @@ function wireEvents() {
     if (!key) return;
     if (e.target.type === "checkbox") state.optimizer.assumptions[key] = e.target.checked;
     else state.optimizer.assumptions[key] = Number(e.target.value);
-    renderMetrics(); scheduleSave();
+    scheduleMetricsUpdate(); scheduleSave();
   });
 
   // Toolbar buttons
@@ -1263,7 +1238,7 @@ function wireEvents() {
         setStatus("Optimization cancelled.");
       } else {
         state.optimizer.results = sorted.slice(0, 5);
-        renderResults(); renderMetrics(); scheduleSave();
+        renderResults(); scheduleMetricsUpdate(); scheduleSave();
         setStatus(`Top ${state.optimizer.results.length} builds generated.`);
       }
     } catch (error) {

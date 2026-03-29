@@ -19,6 +19,8 @@ export const POINT_BUY_MAX_SCORE  = 15;
 export const MAX_LEVEL            = 20;
 export const MIN_LEVEL            = 1;
 export const MAX_MAGIC_BONUS      = 5;
+export const ABILITY_SCORE_MIN    = 3;  // PHB minimum (rolled/manual); point-buy uses POINT_BUY_MIN_SCORE
+export const ABILITY_SCORE_MAX    = 30; // PHB maximum (includes magical enhancements)
 export const D20_SIDES            = 20;
 export const BASE_AC              = 10;
 export const MIN_HIT_CHANCE       = 0.05; // Natural 1 always misses
@@ -56,8 +58,8 @@ export const CLASSES = {
   fighter:   { label: "Fighter",   hitDie: 10, saveProficiencies: ["str","con"], armorType: "heavy",     weaponStyle: "str", spellcasting: null,   defaultCastingAbility: null, tags: ["frontliner","sustained_dpr","nova_dpr","tank"], features: { extraAttackLevel: 5,    burstUsesPerShortRest: 1, bonusDamagePerAttack: 0 } },
   monk:      { label: "Monk",      hitDie:  8, saveProficiencies: ["str","dex"], armorType: "unarmored", weaponStyle: "dex", spellcasting: null,   defaultCastingAbility: null, tags: ["mobile","sustained_dpr","skirmisher"],         features: { extraAttackLevel: 5,    burstUsesPerShortRest: 0, bonusDamagePerAttack: 0 } },
   paladin:   { label: "Paladin",   hitDie: 10, saveProficiencies: ["wis","cha"], armorType: "heavy",     weaponStyle: "str", spellcasting: "half", defaultCastingAbility: "cha", tags: ["nova_dpr","tank","support"],                  features: { extraAttackLevel: 5,    burstUsesPerShortRest: 0, bonusDamagePerAttack: 0 } },
-  ranger:    { label: "Ranger",    hitDie: 10, saveProficiencies: ["str","dex"], armorType: "medium",    weaponStyle: "dex", spellcasting: "half", defaultCastingAbility: "wis", tags: ["sustained_dpr","utility","ranged"],           features: { extraAttackLevel: 5,    burstUsesPerShortRest: 0, bonusDamagePerAttack: 1 } },
-  rogue:     { label: "Rogue",     hitDie:  8, saveProficiencies: ["dex","int"], armorType: "light",     weaponStyle: "dex", spellcasting: null,   defaultCastingAbility: null, tags: ["nova_dpr","skills","initiative"],              features: { extraAttackLevel: null, burstUsesPerShortRest: 0, bonusDamagePerAttack: 3 } },
+  ranger:    { label: "Ranger",    hitDie: 10, saveProficiencies: ["str","dex"], armorType: "medium",    weaponStyle: "dex", spellcasting: "half", defaultCastingAbility: "wis", tags: ["sustained_dpr","utility","ranged"],           features: { extraAttackLevel: 5,    burstUsesPerShortRest: 0, bonusDamagePerAttack: 0 } },
+  rogue:     { label: "Rogue",     hitDie:  8, saveProficiencies: ["dex","int"], armorType: "light",     weaponStyle: "dex", spellcasting: null,   defaultCastingAbility: null, tags: ["nova_dpr","skills","initiative"],              features: { extraAttackLevel: null, burstUsesPerShortRest: 0, bonusDamagePerAttack: 0 } },
   sorcerer:  { label: "Sorcerer",  hitDie:  6, saveProficiencies: ["con","cha"], armorType: "light",     weaponStyle: "dex", spellcasting: "full", defaultCastingAbility: "cha", tags: ["blaster","control","concentration"],          features: { extraAttackLevel: null, burstUsesPerShortRest: 0, bonusDamagePerAttack: 0 } },
   warlock:   { label: "Warlock",   hitDie:  8, saveProficiencies: ["wis","cha"], armorType: "light",     weaponStyle: "dex", spellcasting: "pact", defaultCastingAbility: "cha", tags: ["sustained_dpr","blaster","short_rest"],       features: { extraAttackLevel: null, burstUsesPerShortRest: 1, bonusDamagePerAttack: 0 } },
   wizard:    { label: "Wizard",    hitDie:  6, saveProficiencies: ["int","wis"], armorType: "light",     weaponStyle: "dex", spellcasting: "full", defaultCastingAbility: "int", tags: ["control","blaster","utility"],                features: { extraAttackLevel: null, burstUsesPerShortRest: 0, bonusDamagePerAttack: 0 } },
@@ -112,6 +114,13 @@ export function validateAbilityKey(key) {
   return ABILITIES.includes(key) ? key : "str";
 }
 
+/**
+ * Escape a string for safe interpolation into HTML.
+ */
+export function escHtml(s) {
+  return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+}
+
 // =========================================================
 // Rules Math
 // =========================================================
@@ -136,13 +145,16 @@ export function proficiencyBonus(level) {
 /**
  * Point-buy cost table for a single ability score.
  * Scores below 8 return 0; scores above 15 return 9 (max cost).
+ * PHB point-buy costs: 8→0, 9→1, 10→2, 11→3, 12→4, 13→5 (linear),
+ * 14→7, 15→9 (accelerating). Table indexed by (score − POINT_BUY_MIN_SCORE).
  */
+const _POINT_BUY_COST_TABLE = [0, 1, 2, 3, 4, 5, 7, 9]; // index 0 = score 8
+
 export function pointBuyCost(s) {
-  const score = Number(s);
-  if (isNaN(score) || score < POINT_BUY_MIN_SCORE) return 0;
-  if (score > POINT_BUY_MAX_SCORE) return 9;
-  const costTable = [0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 2, 3, 4, 5, 7, 9];
-  return costTable[score] || 0;
+  const score = Math.round(Number(s));
+  if (!Number.isFinite(score) || score < POINT_BUY_MIN_SCORE) return 0;
+  if (score > POINT_BUY_MAX_SCORE) return _POINT_BUY_COST_TABLE.at(-1);
+  return _POINT_BUY_COST_TABLE[score - POINT_BUY_MIN_SCORE];
 }
 
 /**
@@ -237,6 +249,12 @@ export function effectiveHitChance(attackBonus, targetAC, advantageRate = 0) {
 
 /**
  * Probability that a target fails a saving throw against a given save DC.
+ *
+ * Save fail chance: target must roll >= needed to save.
+ * Fail chance = P(roll < needed) = (needed - 1) / 20
+ * This is the complement of the attack hit-chance formula:
+ *   hit chance = P(roll >= needed) = (20 + 1 - needed) / 20
+ *
  * @param {number} saveDC         - The spell or ability save DC
  * @param {number} targetSaveBonus - Target's total saving throw modifier
  */
@@ -386,6 +404,8 @@ if (typeof globalThis !== "undefined") {
     POINT_BUY_MAX_POINTS,
     POINT_BUY_MIN_SCORE,
     POINT_BUY_MAX_SCORE,
+    ABILITY_SCORE_MIN,
+    ABILITY_SCORE_MAX,
     MAX_LEVEL,
     MIN_LEVEL,
     MAX_MAGIC_BONUS,
@@ -405,6 +425,8 @@ if (typeof globalThis !== "undefined") {
     validateMagicBonus,
     validateClassKey,
     validateAbilityKey,
+    // Utility
+    escHtml,
     // Rules math
     modFromScore,
     proficiencyBonus,
