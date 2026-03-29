@@ -39,6 +39,10 @@ import {
   alertInitiativeBonus,
 } from "./damage-model.js";
 
+import { buildFromCharacter } from "./effect-system.js";
+import { computeDprFromState } from "./combat-engine.js";
+import { computeControlPressure } from "./spell-evaluator.js";
+
 // =========================================================
 // CONSTANTS - App-specific magic numbers
 // =========================================================
@@ -265,37 +269,54 @@ function evaluateBuildSnapshot(snapshot, assumptions, objective) {
     const attacks = estimateAttacksPerRound(snapshot.class, snapshot.level);
     const hitChance = effectiveHitChance(attackBonus, assumptions.targetAC, assumptions.advantageRate);
 
-    // Class-specific sustained DPR (per-attack + once-per-turn riders)
-    const sustainedDpr = computeSustainedDpr({
-      classKey:         snapshot.class,
-      level:            snapshot.level,
-      attackBonus,
-      targetAC:         assumptions.targetAC,
-      advantageRate:    assumptions.advantageRate,
-      primaryMod,
-      weaponMagicBonus: weaponMagic,
-      attacks,
-      featPlan:         snapshot.featPlan,
-    });
-
     // Spell slots: use snapshot's actual slots, falling back to level-based estimate
     const spellSlots = (snapshot.spellcasting?.slots
       && Object.values(snapshot.spellcasting.slots).some(v => v > 0))
       ? snapshot.spellcasting.slots
       : estimateSpellSlots(snapshot.class, snapshot.level);
 
-    // Burst DPR (Round 1): explicit resource-budget model, added to sustained
-    const burstExtra = computeBurstDprRound1({
-      classKey:         snapshot.class,
-      level:            snapshot.level,
-      hitChance,
-      primaryMod,
-      weaponMagicBonus: weaponMagic,
-      attacks,
-      spellSlots,
-      assumptions,
-    });
-    const burstDprRound1 = sustainedDpr + burstExtra;
+    // DPR: try the new combat engine first; fall back to damage-model.js
+    let sustainedDpr, burstDprRound1;
+    try {
+      const engineState = buildFromCharacter(
+        snapshot,
+        snapshot.featPlan || [],
+        { weaponMagicBonus: weaponMagic, armorMagicBonus: armorMagic },
+      );
+      const dprResult = computeDprFromState(engineState, {
+        targetAC:           assumptions.targetAC,
+        targetSaveBonus:    assumptions.targetSaveBonus,
+        advantageRate:      assumptions.advantageRate,
+        roundsPerEncounter: assumptions.roundsPerEncounter || 4,
+      });
+      sustainedDpr  = dprResult.sustainedDpr;
+      // burstRound1 from the engine is extra over the average; combine with sustained
+      burstDprRound1 = dprResult.sustainedDpr + dprResult.burstDprRound1;
+    } catch (_engineError) {
+      // Fallback: legacy damage-model.js path
+      sustainedDpr = computeSustainedDpr({
+        classKey:         snapshot.class,
+        level:            snapshot.level,
+        attackBonus,
+        targetAC:         assumptions.targetAC,
+        advantageRate:    assumptions.advantageRate,
+        primaryMod,
+        weaponMagicBonus: weaponMagic,
+        attacks,
+        featPlan:         snapshot.featPlan,
+      });
+      const burstExtra = computeBurstDprRound1({
+        classKey:         snapshot.class,
+        level:            snapshot.level,
+        hitChance,
+        primaryMod,
+        weaponMagicBonus: weaponMagic,
+        attacks,
+        spellSlots,
+        assumptions,
+      });
+      burstDprRound1 = sustainedDpr + burstExtra;
+    }
 
     // Defensive capabilities
     const hp = getEstimatedHP(snapshot.level, snapshot.class, conMod);
@@ -313,15 +334,32 @@ function evaluateBuildSnapshot(snapshot, assumptions, objective) {
     const spellAttack = pb + modFromScore(snapshot.abilities[casterAbility]) + spellMagic;
     const failChance = saveFailChance(spellDc, assumptions.targetSaveBonus);
 
-    // Control pressure: slot-budget model (spell level weighted)
+    // Control pressure: use spell-evaluator engine when available, with slot-budget fallback
     let controlPressure = 0;
     if (cls.spellcasting) {
-      const weightedSlots = Object.entries(spellSlots).reduce((sum, [lv, count]) => {
-        const weight = CONTROL_SPELL_LEVEL_WEIGHTS[Number(lv)] || 1;
-        return sum + (Number(count) || 0) * weight;
-      }, 0);
-      const attemptsPerEncounter = weightedSlots / Math.max(1, assumptions.encountersPerDay || 4);
-      controlPressure = failChance * attemptsPerEncounter;
+      try {
+        const spellCtx = {
+          spellDC:         spellDc,
+          spellAttack,
+          castingMod:      modFromScore(snapshot.abilities[casterAbility]),
+          casterLevel:     snapshot.level,
+          targetAC:        assumptions.targetAC,
+          targetSaveBonus: assumptions.targetSaveBonus,
+          targetDPR:       12,
+          partyDPR:        25,
+          enemyCount:      1,
+          roundsLeft:      assumptions.roundsPerEncounter || 4,
+        };
+        controlPressure = computeControlPressure(spellSlots, spellCtx);
+      } catch (_cpError) {
+        // Fallback: legacy slot-budget model
+        const weightedSlots = Object.entries(spellSlots).reduce((sum, [lv, count]) => {
+          const weight = CONTROL_SPELL_LEVEL_WEIGHTS[Number(lv)] || 1;
+          return sum + (Number(count) || 0) * weight;
+        }, 0);
+        const attemptsPerEncounter = weightedSlots / Math.max(1, assumptions.encountersPerDay || 4);
+        controlPressure = failChance * attemptsPerEncounter;
+      }
     }
     // Non-casters: no save-forcing control in base model (near zero)
 

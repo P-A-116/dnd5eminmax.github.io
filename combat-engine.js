@@ -57,9 +57,14 @@ import { conditionMet } from "./effect-system.js";
  */
 export function avgDiceExpr(diceExpr) {
   if (typeof diceExpr === "number") return diceExpr;
-  const m = String(diceExpr).match(/(\d+)d(\d+)/i);
+  const str = String(diceExpr);
+  const m = str.match(/(\d+)d(\d+)/i);
   if (!m) return 0;
-  return Number(m[1]) * (Number(m[2]) + 1) / 2;
+  const diceAvg = Number(m[1]) * (Number(m[2]) + 1) / 2;
+  // Parse optional flat bonus/penalty (e.g. "+3" or "-2")
+  const bonusMatch = str.match(/([+-])\s*(\d+)\s*$/);
+  const flatBonus = bonusMatch ? (bonusMatch[1] === "+" ? 1 : -1) * Number(bonusMatch[2]) : 0;
+  return diceAvg + flatBonus;
 }
 
 /**
@@ -362,6 +367,9 @@ function _buildCombatContext(state, encounter) {
     encounter,
     resources: { ...state.resources },
     round: 0,
+    // _baseActions is populated lazily by _buildAvailableActions on the first
+    // round and reused in subsequent rounds for the resource-independent actions.
+    _baseActions: null,
   };
 }
 
@@ -372,6 +380,8 @@ function _cloneCombatContext(ctx) {
       ...ctx.resources,
       spellSlots: { ...ctx.resources.spellSlots },
     },
+    // _baseActions is shared (read-only) between clones – no deep copy needed
+    _baseActions: ctx._baseActions,
   };
 }
 
@@ -380,60 +390,39 @@ function _cloneCombatContext(ctx) {
 /**
  * Build the set of actions available to this character this round.
  * Each action is a descriptor object consumed by _evaluateActionEV.
+ *
+ * Resource-independent (static) actions are built once and cached on
+ * the combat context to avoid redundant work in later rounds.
  */
 function _buildAvailableActions(ctx, round) {
   const { state, resources } = ctx;
   const cls = state.classKey;
-  const actions = [];
 
-  // Standard attack action
-  const attacks = _effectiveAttacks(state);
-  actions.push({
-    label:    "Attack",
-    slot:     "action",
-    type:     "weapon_attack",
-    attacks,
-  });
-
-  // Warlock: Eldritch Blast
-  if (cls === "warlock") {
-    actions.push({
-      label:  "Eldritch Blast",
-      slot:   "action",
-      type:   "weapon_attack",
-      attacks: warlockBeamCount(state.level),
-    });
+  // Build the static (resource-independent) action list once per combat.
+  if (!ctx._baseActions) {
+    ctx._baseActions = _buildStaticActions(state);
   }
 
-  // Action Surge (Fighter)
+  // Start from the cached static actions; add resource/round-gated actions.
+  const actions = [...ctx._baseActions];
+
+  // Action Surge (Fighter) – only available round 1 with a surge remaining
   if (cls === "fighter" && round === 1 && resources.surges > 0) {
     actions.push({
       label: "Action Surge (Extra Attacks)",
-      slot:  "bonus_action_upgrade", // treated as extra action
+      slot:  "bonus_action_upgrade",
       type:  "weapon_attack",
-      attacks,
+      attacks: _estimateAttacks(cls, state.level),
     });
   }
 
-  // Flurry of Blows (Monk bonus action)
+  // Flurry of Blows (Monk bonus action) – consumes ki
   if (cls === "monk" && resources.ki > 0) {
     actions.push({
       label: "Flurry of Blows",
       slot:  "bonus",
       type:  "weapon_attack",
       attacks: FLURRY_EXTRA_ATTACKS,
-    });
-  }
-
-  // PAM bonus attack
-  const pamAction = state.actions.find(a => a.descriptor?.label === "PAM Bonus Attack");
-  if (pamAction) {
-    actions.push({
-      label: "PAM Bonus Attack",
-      slot:  "bonus",
-      type:  "weapon_attack",
-      attacks: 1,
-      avgDice:  PAM_BONUS_DIE_AVG,
     });
   }
 
@@ -460,6 +449,51 @@ function _buildAvailableActions(ctx, round) {
         castingMod: state.castingMod,
       });
     }
+  }
+
+  return actions;
+}
+
+/**
+ * Build the resource-independent base actions for a character.
+ * These actions are the same every round regardless of remaining resources.
+ *
+ * @param {import('./effect-system.js').CharacterState} state
+ * @returns {object[]}
+ */
+function _buildStaticActions(state) {
+  const cls = state.classKey;
+  const actions = [];
+
+  // Standard attack action
+  const attacks = _effectiveAttacks(state);
+  actions.push({
+    label:    "Attack",
+    slot:     "action",
+    type:     "weapon_attack",
+    attacks,
+  });
+
+  // Warlock: Eldritch Blast (always available – no resource cost)
+  if (cls === "warlock") {
+    actions.push({
+      label:  "Eldritch Blast",
+      slot:   "action",
+      type:   "weapon_attack",
+      attacks: warlockBeamCount(state.level),
+    });
+  }
+
+  // PAM bonus attack (passive, granted by feat – always available)
+  const pamAction = state.actions.find(a => a.descriptor?.label === "PAM Bonus Attack");
+  if (pamAction) {
+    actions.push({
+      label: "PAM Bonus Attack",
+      slot:  "bonus",
+      type:  "weapon_attack",
+      attacks: 1,
+      avgDice:  PAM_BONUS_DIE_AVG,
+    });
   }
 
   return actions;

@@ -58,7 +58,7 @@ import {
  * @property {string[]} tags           – e.g. ["concentrating", "advantage_attack"]
  * @property {string[]} conditions     – e.g. ["paralyzed", "frightened"]
  * @property {object[]} actions        – available action descriptors this turn
- * @property {object}   effectiveHp    – { value } after AC multiplier
+ * @property {number}   effectiveHp    – effective HP after AC multiplier (raw number)
  * @property {object}   _raw           – reference to source character data (read-only)
  */
 
@@ -165,14 +165,15 @@ export function createState(character, overrides = {}) {
     _derived:   false,
   };
 
-  // Mark as needing derivation
-  state._derived = false;
   return state;
 }
 
 /**
  * Produce a shallow clone of a CharacterState.
  * Sub-objects are one-level-deep spread so mutations don't leak.
+ * Actions are deep-ish cloned (map with spread) because action objects may
+ * contain nested descriptors that the combat engine reads but does not mutate;
+ * a shallow spread is sufficient and cheaper than a full deep clone.
  *
  * @param {CharacterState} state
  * @returns {CharacterState}
@@ -721,6 +722,32 @@ export function buildFromCharacter(character, featPlan = [], overrides = {}) {
   return applyEffectPipeline(base, [...clsFts, ...feats]);
 }
 
+// ── Build cache (memoises class/level/feat combinations) ──────────
+
+const _buildCache = new Map();
+
+/**
+ * Cached version of buildFromCharacter.
+ * Uses a composite key of class + level + feat plan so the optimizer
+ * can avoid rebuilding identical configurations on repeated evaluations.
+ *
+ * Note: `overrides` are NOT part of the cache key, so this is best
+ * used for builds where magic bonuses and ability scores come from
+ * the character object itself.
+ *
+ * @param {object}   character  – normalised character
+ * @param {string[]} [featPlan] – feat keys to apply
+ * @param {object}   [overrides] – stat overrides forwarded to buildFromCharacter
+ * @returns {CharacterState}
+ */
+export function cachedBuild(character, featPlan = [], overrides = {}) {
+  const key = `${character.class}:${character.level}:${(featPlan || []).join(",")}`;
+  if (!_buildCache.has(key)) {
+    _buildCache.set(key, buildFromCharacter(character, featPlan, overrides));
+  }
+  return _buildCache.get(key);
+}
+
 // =========================================================
 // DEBUGGING / EXPLAINABILITY
 // =========================================================
@@ -794,6 +821,7 @@ if (typeof globalThis !== "undefined") {
     deduplicateEffects,
     applyEffectPipeline,
     buildFromCharacter,
+    cachedBuild,
     featsToEffects,
     FEAT_EFFECTS,
     CLASS_FEATURE_EFFECTS,

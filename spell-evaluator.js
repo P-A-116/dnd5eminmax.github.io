@@ -193,7 +193,8 @@ export const SPELL_DATABASE = {
   ice_storm: {
     key: "ice_storm", name: "Ice Storm", level: 4, school: "evocation",
     category: "damage", saveType: "dex", halfOnSave: true,
-    diceExpr: "2d8", fixedDamage: 0, targets: 5, upcastDicePerLevel: 0,
+    // 2d8 bludgeoning + 4d6 cold (avg 4×3.5=14 expressed as fixedDamage)
+    diceExpr: "2d8", fixedDamage: 14, targets: 5, upcastDicePerLevel: 0,
     controlType: "difficult_terrain",
   },
 
@@ -255,6 +256,13 @@ export const SPELL_DATABASE = {
   },
 };
 
+// Precompute average dice values for all SPELL_DATABASE entries at module load
+// time so repeated spell evaluations don't reparse the same dice strings.
+for (const spell of Object.values(SPELL_DATABASE)) {
+  if (spell.diceExpr) spell._cachedAvg = _avgDiceExpr(spell.diceExpr);
+  if (spell.healDice) spell._cachedHealAvg = _avgDiceExpr(spell.healDice);
+}
+
 // =========================================================
 // EVALUATION CONTEXT
 // =========================================================
@@ -313,7 +321,7 @@ export function evaluateSpell(spellOrKey, context) {
 // =========================================================
 
 function _evalDamageSpell(spell, ctx, upcastLevels) {
-  const baseDice   = _avgDiceExpr(spell.diceExpr || "1d8");
+  const baseDice   = spell._cachedAvg ?? _avgDiceExpr(spell.diceExpr || "1d8");
   const upcastDice = (spell.upcastDicePerLevel || 0) * upcastLevels * _avgDiceExpr("1d6");
   const fixedBonus = spell.fixedDamage || 0;
   const totalAvgDmg = baseDice + upcastDice + fixedBonus;
@@ -411,7 +419,7 @@ function _evalControlSpell(spell, ctx, upcastLevels) {
   // Any damage component of a control spell (e.g. Vicious Mockery)
   let damageComponent = 0;
   if (spell.diceExpr) {
-    const dmg = _avgDiceExpr(spell.diceExpr);
+    const dmg = spell._cachedAvg ?? _avgDiceExpr(spell.diceExpr);
     damageComponent = pSuccess * dmg * targets;
   }
 
@@ -475,7 +483,7 @@ function _evalBuffSpell(spell, ctx, upcastLevels) {
   // Spiritual Weapon: independent spell attack each round
   if (spell.attackRoll === "spell_attack" && spell.diceExpr) {
     const pHit   = _hitChanceVsAC(ctx.spellAttack, ctx.targetAC);
-    const avgDmg = _avgDiceExpr(spell.diceExpr) + (ctx.castingMod || 0)
+    const avgDmg = (spell._cachedAvg ?? _avgDiceExpr(spell.diceExpr)) + (ctx.castingMod || 0)
                    + (spell.upcastDicePerLevel || 0) * upcastLevels * 3.5;
     const dpr    = pHit * avgDmg;
     value += dpr * dur;
@@ -498,7 +506,7 @@ function _evalBuffSpell(spell, ctx, upcastLevels) {
 // =========================================================
 
 function _evalHealSpell(spell, ctx, upcastLevels) {
-  const base    = _avgDiceExpr(spell.healDice || "1d8");
+  const base    = spell._cachedHealAvg ?? _avgDiceExpr(spell.healDice || "1d8");
   const upcDice = (spell.upcastDicePerLevel || 1) * upcastLevels * 4.5;
   const healed  = (base + upcDice + (ctx.castingMod || 0)) * (spell.targets || 1);
 
@@ -706,9 +714,14 @@ function _normalizeContext(ctx) {
 
 function _avgDiceExpr(expr) {
   if (typeof expr === "number") return expr;
-  const m = String(expr).match(/(\d+)d(\d+)/i);
+  const str = String(expr);
+  const m = str.match(/(\d+)d(\d+)/i);
   if (!m) return 0;
-  return Number(m[1]) * (Number(m[2]) + 1) / 2;
+  const diceAvg = Number(m[1]) * (Number(m[2]) + 1) / 2;
+  // Parse optional flat bonus/penalty (e.g. "+3" or "-2")
+  const bonusMatch = str.match(/([+-])\s*(\d+)\s*$/);
+  const flatBonus = bonusMatch ? (bonusMatch[1] === "+" ? 1 : -1) * Number(bonusMatch[2]) : 0;
+  return diceAvg + flatBonus;
 }
 
 function _hitChanceVsAC(attackBonus, ac) {

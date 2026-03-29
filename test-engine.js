@@ -34,6 +34,19 @@ import {
   DIVINE_SMITE_AVG_DICE,
 } from "./optimizer-constants.js";
 
+import {
+  buildFromCharacter,
+  cachedBuild,
+} from "./effect-system.js";
+
+import { computeDprFromState } from "./combat-engine.js";
+
+import {
+  evaluateSpell,
+  computeControlPressure,
+  SPELL_DATABASE,
+} from "./spell-evaluator.js";
+
 // =========================================================
 // Assertion helpers
 // =========================================================
@@ -423,6 +436,150 @@ assertEqual(alertInitiativeBonus([]),             0,                    "alertIn
 assertEqual(alertInitiativeBonus(["gwm"]),         0,                    "alertInitiativeBonus(['gwm']) === 0 (wrong feat)");
 assertEqual(alertInitiativeBonus(["alert"]),       ALERT_INITIATIVE_BONUS, `alertInitiativeBonus(['alert']) === ${ALERT_INITIATIVE_BONUS}`);
 assertEqual(alertInitiativeBonus(["gwm","alert"]), ALERT_INITIATIVE_BONUS, "alertInitiativeBonus with multiple feats");
+
+// =========================================================
+// Integration tests: buildFromCharacter
+// =========================================================
+
+const testCharacter = {
+  class: "fighter",
+  level: 5,
+  abilities: { str: 16, dex: 12, con: 14, int: 10, wis: 10, cha: 8 },
+};
+
+const builtState = buildFromCharacter(testCharacter, [], {});
+assertTrue(
+  builtState !== null && typeof builtState === "object",
+  "buildFromCharacter returns an object",
+);
+assertEqual(builtState.classKey, "fighter", "buildFromCharacter: classKey is 'fighter'");
+assertEqual(builtState.level,    5,         "buildFromCharacter: level is 5");
+assertTrue(
+  builtState.attackBonus > 0,
+  "buildFromCharacter: attackBonus > 0",
+  `got ${builtState.attackBonus}`,
+);
+assertTrue(
+  typeof builtState.effectiveHp === "number" && builtState.effectiveHp > 0,
+  "buildFromCharacter: effectiveHp is a positive number",
+  `got ${builtState.effectiveHp}`,
+);
+
+// GWM feat should modify attackBonus (–5) and damage bonus (+10)
+const stateGwm = buildFromCharacter(testCharacter, ["gwm"], {});
+assertTrue(
+  stateGwm.attackBonus < builtState.attackBonus,
+  `buildFromCharacter with GWM: attackBonus lower (${stateGwm.attackBonus} < ${builtState.attackBonus})`,
+);
+
+// =========================================================
+// Integration tests: computeDprFromState
+// =========================================================
+
+const dprResult = computeDprFromState(builtState, {
+  targetAC: 15,
+  targetSaveBonus: 4,
+  advantageRate: 0,
+  roundsPerEncounter: 4,
+});
+
+assertTrue(
+  typeof dprResult.sustainedDpr === "number" && dprResult.sustainedDpr > 0,
+  `computeDprFromState: sustainedDpr > 0 (got ${dprResult.sustainedDpr?.toFixed(2)})`,
+);
+assertTrue(
+  typeof dprResult.burstDprRound1 === "number" && dprResult.burstDprRound1 >= 0,
+  `computeDprFromState: burstDprRound1 >= 0 (got ${dprResult.burstDprRound1?.toFixed(2)})`,
+);
+
+// =========================================================
+// Integration tests: computeControlPressure
+// =========================================================
+
+const wizardSpellSlots = { 1: 4, 2: 3, 3: 2, 4: 1, 5: 1, 6: 0, 7: 0, 8: 0, 9: 0 };
+const spellCtx = {
+  spellDC: 15, spellAttack: 7, castingMod: 3, casterLevel: 9,
+  targetAC: 15, targetSaveBonus: 4, targetDPR: 12, partyDPR: 25,
+  enemyCount: 2, roundsLeft: 4,
+};
+
+const cpBaseline = computeControlPressure(wizardSpellSlots, spellCtx);
+assertTrue(
+  typeof cpBaseline === "number" && cpBaseline > 0,
+  `computeControlPressure (no known spells): score > 0 (got ${cpBaseline?.toFixed(3)})`,
+);
+
+// With known control spells the result should be non-negative
+const cpWithSpells = computeControlPressure(
+  wizardSpellSlots,
+  spellCtx,
+  ["hold_person", "hypnotic_pattern", "banishment"],
+);
+assertTrue(
+  typeof cpWithSpells === "number" && cpWithSpells >= 0,
+  `computeControlPressure (with known spells): score >= 0 (got ${cpWithSpells?.toFixed(3)})`,
+);
+
+// =========================================================
+// Integration tests: evaluateSpell
+// =========================================================
+
+// Damage spell: fireball
+const fireballResult = evaluateSpell("fireball", spellCtx);
+assertTrue(
+  typeof fireballResult.value === "number" && fireballResult.value > 0,
+  `evaluateSpell fireball: value > 0 (got ${fireballResult.value?.toFixed(2)})`,
+);
+assertEqual(
+  fireballResult.breakdown.category,
+  "damage",
+  "evaluateSpell fireball: breakdown.category === 'damage'",
+);
+
+// Control spell: hold_person
+const holdPersonResult = evaluateSpell("hold_person", spellCtx);
+assertTrue(
+  typeof holdPersonResult.value === "number" && holdPersonResult.value > 0,
+  `evaluateSpell hold_person: value > 0 (got ${holdPersonResult.value?.toFixed(2)})`,
+);
+assertEqual(
+  holdPersonResult.breakdown.category,
+  "control",
+  "evaluateSpell hold_person: breakdown.category === 'control'",
+);
+
+// Unknown spell key returns 0
+const unknownResult = evaluateSpell("not_a_real_spell", spellCtx);
+assertEqual(unknownResult.value, 0, "evaluateSpell unknown key: value === 0");
+
+// Ice Storm: damage should be > 0 and reflect both 2d8 and 4d6 components
+const iceStormResult = evaluateSpell("ice_storm", spellCtx);
+assertTrue(
+  iceStormResult.value > 0,
+  `evaluateSpell ice_storm: value > 0 (got ${iceStormResult.value?.toFixed(2)})`,
+);
+// The avg damage should be 9 (2d8) + 14 (4d6) = 23 before save/target multipliers
+assertTrue(
+  iceStormResult.breakdown.avgDice >= 23,
+  `evaluateSpell ice_storm: avgDice >= 23 (got ${iceStormResult.breakdown.avgDice})`,
+);
+
+// =========================================================
+// Integration tests: cachedBuild (same reference for same inputs)
+// =========================================================
+
+const cachedA = cachedBuild(testCharacter, []);
+const cachedB = cachedBuild(testCharacter, []);
+assertTrue(
+  cachedA === cachedB,
+  "cachedBuild: identical inputs return the same object reference",
+);
+
+const cachedDiff = cachedBuild({ ...testCharacter, level: 6 }, []);
+assertTrue(
+  cachedDiff !== cachedA,
+  "cachedBuild: different level produces a different object",
+);
 
 // =========================================================
 // Publish results to the page
