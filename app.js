@@ -57,6 +57,62 @@ const MILESTONE_LEVELS = [1, 3, 5, 8, 11, 17, 20];
 // =========================================================
 const CLASS_OPTIONS = Object.keys(CLASSES);
 
+// D&D 5e multiclass ability score prerequisites (PHB p.163)
+const MULTICLASS_PREREQS = {
+  barbarian: { str: 13 },
+  bard:      { cha: 13 },
+  cleric:    { wis: 13 },
+  druid:     { wis: 13 },
+  fighter:   { str: 13 },
+  monk:      { dex: 13, wis: 13 },
+  paladin:   { str: 13, cha: 13 },
+  ranger:    { dex: 13, wis: 13 },
+  rogue:     { dex: 13 },
+  sorcerer:  { cha: 13 },
+  warlock:   { cha: 13 },
+  wizard:    { int: 13 },
+};
+
+// Curated list of popular 2-class multiclass combinations (primary, secondary)
+// Primary class determines armor type, primary attack style, and snapshot.class
+const MULTICLASS_COMBOS = [
+  { primary: "paladin",   secondary: "sorcerer"  }, // Sorcadin – CHA smites + Metamagic
+  { primary: "paladin",   secondary: "warlock"   }, // Padlock – short-rest smite slots
+  { primary: "fighter",   secondary: "warlock"   }, // Hexblade dip – CHA attacks + EB
+  { primary: "fighter",   secondary: "rogue"     }, // Action Surge + Sneak Attack
+  { primary: "sorcerer",  secondary: "warlock"   }, // Sorlock – EB + Quickened Spell
+  { primary: "warlock",   secondary: "fighter"   }, // EB machine + Action Surge
+  { primary: "barbarian", secondary: "rogue"     }, // Reckless Attack + Sneak Attack
+  { primary: "cleric",    secondary: "fighter"   }, // Armor + martial + healing
+  { primary: "paladin",   secondary: "bard"      }, // Full-caster smite slots
+  { primary: "fighter",   secondary: "wizard"    }, // War Magic / Bladesinger
+  { primary: "ranger",    secondary: "rogue"     }, // Skills + combat versatility
+  { primary: "rogue",     secondary: "ranger"    }, // SA + Ranger utility spells
+  { primary: "monk",      secondary: "rogue"     }, // Unarmed + Sneak Attack
+  { primary: "cleric",    secondary: "paladin"   }, // Divine champion
+  { primary: "barbarian", secondary: "fighter"   }, // Reckless + Action Surge
+];
+
+// Optimal ability-score priority orders for each multiclass combo.
+// Key: "primary+secondary".  Value: ABILITIES sorted from highest to lowest priority.
+const COMBO_ABILITY_PRIORITIES = {
+  "paladin+sorcerer":  ["cha", "con", "str", "dex", "wis", "int"],
+  "paladin+warlock":   ["cha", "con", "str", "dex", "wis", "int"],
+  "fighter+warlock":   ["cha", "con", "str", "dex", "wis", "int"], // Hexblade uses CHA
+  "fighter+rogue":     ["dex", "con", "str", "wis", "int", "cha"],
+  "sorcerer+warlock":  ["cha", "con", "dex", "wis", "int", "str"],
+  "warlock+fighter":   ["cha", "con", "str", "dex", "wis", "int"], // needs STR 13 for fighter entry
+  "barbarian+rogue":   ["dex", "con", "str", "wis", "int", "cha"],
+  "cleric+fighter":    ["str", "con", "wis", "dex", "int", "cha"],
+  "paladin+bard":      ["cha", "con", "str", "dex", "wis", "int"],
+  "fighter+wizard":    ["int", "con", "str", "dex", "wis", "cha"],
+  "ranger+rogue":      ["dex", "con", "wis", "str", "int", "cha"],
+  "rogue+ranger":      ["dex", "con", "wis", "str", "int", "cha"],
+  "monk+rogue":        ["dex", "wis", "con", "str", "int", "cha"],
+  "cleric+paladin":    ["cha", "str", "wis", "con", "dex", "int"], // needs STR 13 + CHA 13 for paladin
+  "barbarian+fighter": ["str", "con", "dex", "wis", "int", "cha"],
+};
+
 const ABILITY_LABELS = { str: "Strength", dex: "Dexterity", con: "Constitution", int: "Intelligence", wis: "Wisdom", cha: "Charisma" };
 
 const STANDARD_ARRAY = [15, 14, 13, 12, 10, 8];
@@ -223,6 +279,102 @@ function autoAssignPointBuy(classKey, objective) {
   return scores;
 }
 
+// =========================================================
+// 3a. Multiclass helpers
+// =========================================================
+
+/**
+ * Allocate 27 point-buy points in the given priority order.
+ * @param {string[]} priorityOrder - Ability keys from highest to lowest priority.
+ * @returns {object} Map of ability key → score.
+ */
+function allocatePointBuy(priorityOrder) {
+  const scores = Object.fromEntries(ABILITIES.map(a => [a, POINT_BUY_MIN_SCORE]));
+  let remaining = POINT_BUY_MAX_POINTS;
+  for (const ab of priorityOrder) {
+    while (scores[ab] < POINT_BUY_MAX_SCORE && remaining > 0) {
+      const cost = pointBuyCost(scores[ab] + 1) - pointBuyCost(scores[ab]);
+      if (cost > remaining) break;
+      scores[ab]++;
+      remaining -= cost;
+    }
+  }
+  return scores;
+}
+
+/**
+ * Return true if the given ability scores meet the D&D 5e multiclass prerequisites
+ * for the specified class key.
+ */
+function meetsMulticlassPrereqs(classKey, abilityScores) {
+  const prereqs = MULTICLASS_PREREQS[classKey] || {};
+  return Object.entries(prereqs).every(([ab, min]) => (abilityScores[ab] || 0) >= min);
+}
+
+/**
+ * Compute multiclass spell slots using the combined-caster-level rule.
+ * Full casters contribute their full class level; half-casters contribute
+ * half (rounded down); pact casters add their slots separately.
+ *
+ * @returns {object} Map of slot level (1-9) → count.
+ */
+function computeMulticlassSpellSlots(primaryClass, primaryLevel, secondaryClass, secondaryLevel) {
+  const primaryCls   = getClassData(primaryClass);
+  const secondaryCls = getClassData(secondaryClass);
+
+  let combinedCasterLevel = 0;
+  if (primaryCls.spellcasting === "full")  combinedCasterLevel += primaryLevel;
+  else if (primaryCls.spellcasting === "half") combinedCasterLevel += Math.floor(primaryLevel / 2);
+
+  if (secondaryCls.spellcasting === "full")  combinedCasterLevel += secondaryLevel;
+  else if (secondaryCls.spellcasting === "half") combinedCasterLevel += Math.floor(secondaryLevel / 2);
+
+  // Regular slots from the full-caster table (use wizard as proxy)
+  const regular = combinedCasterLevel > 0 ? estimateSpellSlots("wizard", combinedCasterLevel) : {};
+  const result = { ...regular };
+
+  // Pact magic slots added on top
+  for (const [cls, lvl] of [[primaryClass, primaryLevel], [secondaryClass, secondaryLevel]]) {
+    if (getClassData(cls).spellcasting === "pact") {
+      const pact = estimateSpellSlots(cls, lvl);
+      Object.entries(pact).forEach(([lv, ct]) => {
+        const k = Number(lv);
+        result[k] = (result[k] || 0) + ct;
+      });
+    }
+  }
+
+  return result;
+}
+
+/**
+ * Generate all multiclass candidate entries for the given analysis level.
+ * Each entry encodes the two classes and their level split.
+ * @param {number} analysisLevel
+ * @returns {Array<{primary, secondary, primaryLevel, secondaryLevel}>}
+ */
+function generateMulticlassCandidates(analysisLevel) {
+  const level = validateLevel(analysisLevel);
+  const candidates = [];
+
+  // Secondary dip sizes to try; always includes 1, 2, 3, and a few larger splits
+  const secLevels = new Set([1, 2, 3, Math.floor(level / 3), Math.floor(level / 2)].filter(n => n >= 1 && n <= level - 1));
+
+  for (const combo of MULTICLASS_COMBOS) {
+    for (const secLvl of secLevels) {
+      const primLvl = level - secLvl;
+      if (primLvl < 1) continue;
+      candidates.push({
+        primary: combo.primary,
+        secondary: combo.secondary,
+        primaryLevel: primLvl,
+        secondaryLevel: secLvl,
+      });
+    }
+  }
+  return candidates;
+}
+
 /**
  * Get suggested skill proficiencies based on class and objective
  */
@@ -266,7 +418,10 @@ function evaluateBuildSnapshot(snapshot, assumptions, objective) {
 
     // Offensive capabilities
     const attackBonus = pb + primaryMod + weaponMagic;
-    const attacks = estimateAttacksPerRound(snapshot.class, snapshot.level);
+    // Use _primaryLevel when set (multiclass builds) so Extra Attack is checked
+    // against the primary-class level, not the total character level.
+    const attacksLevel = snapshot._primaryLevel ?? snapshot.level;
+    const attacks = estimateAttacksPerRound(snapshot.class, attacksLevel);
     const hitChance = effectiveHitChance(attackBonus, assumptions.targetAC, assumptions.advantageRate);
 
     // Spell slots: use snapshot's actual slots, falling back to level-based estimate
@@ -545,6 +700,120 @@ function buildOneClassResult(classKey, objective, assumptions) {
   }
 }
 
+/**
+ * Build a single multiclass result entry (sync).
+ * Called for each multiclass combo entry by the async runner.
+ *
+ * @param {{primary, secondary, primaryLevel, secondaryLevel}} combo
+ * @param {string} objective
+ * @param {Object} assumptions
+ * @returns {Object|null}
+ */
+function buildOneMulticlassResult(combo, objective, assumptions) {
+  try {
+    const { primary, secondary, primaryLevel, secondaryLevel } = combo;
+    const totalLevel = primaryLevel + secondaryLevel;
+    const primaryCls   = getClassData(primary);
+    const secondaryCls = getClassData(secondary);
+
+    // Ability score allocation using combo-specific priority order
+    const comboKey = `${primary}+${secondary}`;
+    const priorityOrder = COMBO_ABILITY_PRIORITIES[comboKey] ||
+      [primaryCls.weaponStyle || "str", "con", "dex", "wis", "int", "cha"];
+    const abilities = allocatePointBuy(priorityOrder);
+
+    // Both classes' prerequisites must be satisfied
+    if (!meetsMulticlassPrereqs(primary,   abilities)) return null;
+    if (!meetsMulticlassPrereqs(secondary, abilities)) return null;
+
+    // Simulate ASI upgrades for the primary stat
+    const primaryAbility = priorityOrder[0];
+    const asiCount = ASI_LEVELS.filter(n => n <= totalLevel).length;
+    for (let i = 0; i < asiCount; i++) {
+      if (abilities[primaryAbility] < ABILITY_SCORE_MAX) {
+        abilities[primaryAbility] = Math.min(ABILITY_SCORE_MAX, abilities[primaryAbility] + 2);
+      }
+    }
+
+    // Compute multiclass spell slots
+    const spellSlots = computeMulticlassSpellSlots(primary, primaryLevel, secondary, secondaryLevel);
+
+    // Casting ability: prefer primary's, fall back to secondary's
+    const castingAbility = primaryCls.defaultCastingAbility || secondaryCls.defaultCastingAbility || "int";
+
+    // Snapshot: class = primary (determines armor, feat lists, base proficiencies)
+    // _primaryLevel allows evaluateBuildSnapshot to use the correct level for Extra Attack
+    const snapshot = {
+      class: primary,
+      level: totalLevel,
+      _primaryLevel: primaryLevel,
+      abilities,
+      featPlan: [],
+      spellcasting: { slots: spellSlots, castingAbility },
+      multiclassData: { secondary, secondaryLevel },
+    };
+
+    const metrics = evaluateBuildSnapshot(snapshot, assumptions, objective);
+    const score   = metrics.score || 0;
+
+    const classLabel = `${primaryCls.label} ${primaryLevel} / ${secondaryCls.label} ${secondaryLevel}`;
+
+    // Strengths
+    const strengths = [];
+    if (metrics.sustainedDpr  >= STRENGTH_THRESHOLD_SUSTAINED_DPR) strengths.push("Strong sustained offense");
+    if (metrics.burstDprRound1 >= STRENGTH_THRESHOLD_BURST_DPR)    strengths.push("Strong burst potential");
+    if (metrics.effectiveHp   >= STRENGTH_THRESHOLD_EFFECTIVE_HP)  strengths.push("High durability");
+    if (metrics.controlPressure >= STRENGTH_THRESHOLD_CONTROL)     strengths.push("Strong control");
+    if (metrics.skillScore    >= STRENGTH_THRESHOLD_SKILL)         strengths.push("High utility");
+
+    // Multiclass-specific strengths
+    const hasNewCasting = !primaryCls.spellcasting && secondaryCls.spellcasting;
+    if (hasNewCasting) strengths.push("Gained spellcasting");
+    const bothMartial = !primaryCls.spellcasting && !secondaryCls.spellcasting;
+    if (bothMartial) strengths.push("Full martial progression");
+
+    // Tradeoffs
+    const tradeoffs = [];
+    const avgHitDie = (primaryCls.hitDie * primaryLevel + secondaryCls.hitDie * secondaryLevel) / totalLevel;
+    if (avgHitDie < 8)  tradeoffs.push("Reduced hit points");
+    if (primaryCls.armorType === "light" && objective === "tank") tradeoffs.push("Weaker armor");
+    const hasExtraAttackPrimary   = primaryCls.features?.extraAttackLevel   !== null &&
+                                     primaryLevel   >= (primaryCls.features?.extraAttackLevel   || 99);
+    const hasExtraAttackSecondary = secondaryCls.features?.extraAttackLevel !== null &&
+                                     secondaryLevel >= (secondaryCls.features?.extraAttackLevel || 99);
+    if (!hasExtraAttackPrimary && !hasExtraAttackSecondary &&
+        (primaryCls.features?.extraAttackLevel || secondaryCls.features?.extraAttackLevel)) {
+      tradeoffs.push("No Extra Attack at this split");
+    }
+
+    // Build a minimal plan array (compatible with applyBuildResult)
+    const plan = [{ level: totalLevel, snapshot, metrics }];
+
+    return {
+      classKey:       primary,
+      classLabel,
+      isMulticlass:   true,
+      multiclassData: { primary, secondary, primaryLevel, secondaryLevel },
+      score,
+      plan,
+      strengths,
+      tradeoffs,
+      summary: {
+        primaryStat:    metrics.primary,
+        sustainedDpr:   metrics.sustainedDpr,
+        burstDprRound1: metrics.burstDprRound1,
+        effectiveHp:    metrics.effectiveHp,
+        spellDc:        metrics.spellDc,
+        initiative:     metrics.initiative,
+        ac:             metrics.ac,
+      },
+    };
+  } catch (error) {
+    console.error(`Error generating multiclass build ${combo.primary}/${combo.secondary}:`, error);
+    return null;
+  }
+}
+
 // =========================================================
 // 4. State Model
 // =========================================================
@@ -562,6 +831,7 @@ function safeId() {
     return Math.random().toString(36).slice(2) + Date.now().toString(36); 
   }
 }
+
 
 /**
  * Create a default character state object
@@ -989,7 +1259,7 @@ function renderResults() {
   if (!list) return;
   const results = state.optimizer.results || [];
   if (!results.length) {
-    list.innerHTML = `<div style="font-size:0.72rem;color:#8b949e;padding:0.4rem">Click ⚡ Optimize to generate builds.</div>`;
+    list.innerHTML = `<div class="results-empty">Click ⚡ Optimize to generate builds.</div>`;
     if (note) note.textContent = "";
     return;
   }
@@ -997,11 +1267,14 @@ function renderResults() {
   list.innerHTML = "";
   results.forEach((r, idx) => {
     const card = document.createElement("div");
-    card.className = "result-card" + (idx === 0 ? " rank-1" : "");
+    card.className = "result-card" + (idx === 0 ? " rank-1" : "") + (r.isMulticlass ? " multiclass" : "");
     const s = r.summary;
+    const multiclassBadge = r.isMulticlass
+      ? `<span class="tag multiclass-badge">Multiclass</span>`
+      : "";
     card.innerHTML = `
       <div class="result-header">
-        <span class="result-name">#${idx+1} ${r.classLabel}</span>
+        <span class="result-name">#${idx+1} ${escHtml(r.classLabel)}</span>
         <span class="result-score">Score: ${fmtFixed(r.score)}</span>
       </div>
       <div class="result-stats">
@@ -1014,8 +1287,9 @@ function renderResults() {
         <span>Pri: ${s.primaryStat?.toUpperCase()}</span>
       </div>
       <div class="result-tags">
-        ${r.strengths.map(t => `<span class="tag good">${t}</span>`).join("")}
-        ${r.tradeoffs.map(t => `<span class="tag warn">⚠ ${t}</span>`).join("")}
+        ${multiclassBadge}
+        ${r.strengths.map(t => `<span class="tag good">${escHtml(t)}</span>`).join("")}
+        ${r.tradeoffs.map(t => `<span class="tag warn">⚠ ${escHtml(t)}</span>`).join("")}
       </div>
       <button class="result-apply-btn" data-apply-idx="${idx}">Apply to Builder</button>
     `;
@@ -1241,30 +1515,44 @@ function wireEvents() {
     const btnOptimize = document.getElementById("btn-optimize");
     const btnCancel   = document.getElementById("btn-cancel");
     const btnApplyTop = document.getElementById("btn-apply-top");
+    const progressWrap = document.getElementById("optimizer-progress");
+    const progressBar  = document.getElementById("optimizer-progress-bar");
 
-    // Disable optimize / apply; show cancel
+    // Disable optimize / apply; show cancel + progress bar
     btnOptimize.disabled = true;
     btnApplyTop.disabled = true;
     btnCancel.classList.remove("hidden");
+    if (progressWrap) progressWrap.classList.remove("hidden");
+    if (progressBar)  progressBar.style.width = "0%";
 
-    const pool = CLASS_OPTIONS;
+    const { objective, assumptions } = state.optimizer;
+
+    // Build pool: single-class entries (strings) + multiclass entries (objects) when enabled
+    const pool = [...CLASS_OPTIONS];
+    if (assumptions.multiclass) {
+      pool.push(...generateMulticlassCandidates(assumptions.analysisLevel));
+    }
+
     setStatus(`Generating builds… 0 / ${pool.length}`);
 
     _currentCancelToken = new CancelToken();
     const token = _currentCancelToken;
 
-    const { objective, assumptions } = state.optimizer;
-
     try {
       const sorted = await runOptimizerAsync(
         pool,
-        classKey => buildOneClassResult(classKey, objective, assumptions),
+        entry => typeof entry === "string"
+          ? buildOneClassResult(entry, objective, assumptions)
+          : buildOneMulticlassResult(entry, objective, assumptions),
         token,
         ({ processed, total, phase }) => {
           if (phase === "generating") {
+            const pct = Math.round((processed / total) * 100);
             setStatus(`Generating builds… ${processed} / ${total}`);
+            if (progressBar) progressBar.style.width = `${pct}%`;
           } else if (phase === "sorting") {
             setStatus("Sorting results…");
+            if (progressBar) progressBar.style.width = "95%";
           } else {
             setStatus(`Optimizing… (${phase})`);
           }
@@ -1277,6 +1565,7 @@ function wireEvents() {
       } else {
         state.optimizer.results = sorted.slice(0, 5);
         renderResults(); scheduleMetricsUpdate(); scheduleSave();
+        if (progressBar) progressBar.style.width = "100%";
         setStatus(`Top ${state.optimizer.results.length} builds generated.`);
       }
     } catch (error) {
@@ -1286,6 +1575,8 @@ function wireEvents() {
       btnOptimize.disabled = false;
       btnApplyTop.disabled = false;
       btnCancel.classList.add("hidden");
+      if (progressWrap) progressWrap.classList.add("hidden");
+      if (progressBar)  progressBar.style.width = "0%";
       _currentCancelToken = null;
     }
   });
@@ -1383,7 +1674,10 @@ function applyBuildResult(idx) {
     state.abilityMode = "pointbuy";
     state.abilities = { ...finalStep.snapshot.abilities };
     state.skills = nextSkills;
-    const castAb = getClassData(result.classKey).defaultCastingAbility;
+
+    // For multiclass results, prefer the casting ability from the snapshot
+    const castAb = finalStep.snapshot?.spellcasting?.castingAbility ||
+                   getClassData(result.classKey).defaultCastingAbility;
     if (castAb) state.spellcasting.castingAbility = castAb;
 
     // Normalize + validate the applied state; preserve existing optimizer results
@@ -1396,7 +1690,7 @@ function applyBuildResult(idx) {
     render();
     scheduleSave();
     showValidationIssues(issues);
-    setStatus(`Applied ${result.classLabel} build.`);
+    setStatus(`Applied ${escHtml(result.classLabel)} build.`);
     // scroll to top
     window.scrollTo(0, 0);
   } catch (error) {
