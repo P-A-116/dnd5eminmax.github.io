@@ -11,6 +11,7 @@
 import {
   ABILITIES, CLASSES,
   POINT_BUY_MIN_SCORE, POINT_BUY_MAX_SCORE,
+  ABILITY_SCORE_MIN, ABILITY_SCORE_MAX,
   MAX_LEVEL, MIN_LEVEL, MAX_MAGIC_BONUS,
   clamp, validateLevel, validateMagicBonus, validateClassKey, validateAbilityKey,
 } from "./dnd-engine.js";
@@ -64,8 +65,6 @@ export function ensureBoolean(value) {
 // Module-level constants (not exported from dnd-engine)
 // =========================================================
 
-const ABILITY_SCORE_MIN     = 1;
-const ABILITY_SCORE_MAX     = 30;
 const ABILITY_SCORE_DEFAULT = 10;
 const MAX_SPELL_LEVEL       = 9;
 const MAX_SPELL_SLOTS       = 9;
@@ -315,8 +314,8 @@ export function validateState(state) {
         issue(`abilities.${ab}`, `Ability score "${ab}" is not a number (got: ${val}).`, "error");
       } else {
         const n = Number(val);
-        if (n < 1 || n > 30) {
-          issue(`abilities.${ab}`, `Ability score "${ab}" (${n}) is outside the valid range 1–30.`, "warning");
+        if (n < ABILITY_SCORE_MIN || n > ABILITY_SCORE_MAX) {
+          issue(`abilities.${ab}`, `Ability score "${ab}" (${n}) is outside the valid range ${ABILITY_SCORE_MIN}–${ABILITY_SCORE_MAX}.`, "warning");
         }
         if (s.abilityMode === "pointbuy" && (n < POINT_BUY_MIN_SCORE || n > POINT_BUY_MAX_SCORE)) {
           issue(`abilities.${ab}`, `In point-buy mode, "${ab}" (${n}) should be ${POINT_BUY_MIN_SCORE}–${POINT_BUY_MAX_SCORE}.`, "warning");
