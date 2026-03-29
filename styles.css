@@ -4,7 +4,10 @@
   --bg-panel:    #1e293b;
   --bg-input:    #0f172a;
   --bg-header:   #162032;
+  --bg-hover:    #253346;
+  --bg-btn-hover: #2d3748;
   --border:      #334155;
+  --border-hover: #4a5568;
   --border-subtle: #1e293b;
   --text:        #e2e8f0;
   --text-muted:  #94a3b8;
@@ -155,8 +158,8 @@ button {
   transition: background var(--transition), border-color var(--transition), transform 0.1s ease, box-shadow var(--transition);
 }
 button:hover {
-  background: #2d3748;
-  border-color: #4a5568;
+  background: var(--bg-btn-hover);
+  border-color: var(--border-hover);
   color: var(--text);
 }
 button:active { transform: translateY(1px); }
@@ -265,7 +268,7 @@ td {
   vertical-align: middle;
 }
 tr:last-child td { border-bottom: none; }
-tr:hover td { background: #253346; }
+tr:hover td { background: var(--bg-hover); }
 
 td input[type="number"],
 td input[type="text"] { width: 4rem; }
@@ -541,4 +544,4 @@ td select { width: 5.5rem; }
 ::-webkit-scrollbar { width: 6px; height: 6px; }
 ::-webkit-scrollbar-track { background: var(--bg); }
 ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
-::-webkit-scrollbar-thumb:hover { background: #4a5568; }
+::-webkit-scrollbar-thumb:hover { background: var(--border-hover); }

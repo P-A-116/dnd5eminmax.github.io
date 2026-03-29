@@ -51,6 +51,8 @@ const MAX_SPELL_LEVEL = 9;
 // ASI/Feat breakpoint levels
 const ASI_LEVELS = [4, 8, 12, 16, 19];
 const MILESTONE_LEVELS = [1, 3, 5, 8, 11, 17, 20];
+// Sentinel used when a class never gains Extra Attack (ensures the condition is never true)
+const EXTRA_ATTACK_NEVER = 99;
 
 // =========================================================
 // 1. Data / Constants
@@ -778,9 +780,9 @@ function buildOneMulticlassResult(combo, objective, assumptions) {
     if (avgHitDie < 8)  tradeoffs.push("Reduced hit points");
     if (primaryCls.armorType === "light" && objective === "tank") tradeoffs.push("Weaker armor");
     const hasExtraAttackPrimary   = primaryCls.features?.extraAttackLevel   !== null &&
-                                     primaryLevel   >= (primaryCls.features?.extraAttackLevel   || 99);
+                                     primaryLevel   >= (primaryCls.features?.extraAttackLevel   || EXTRA_ATTACK_NEVER);
     const hasExtraAttackSecondary = secondaryCls.features?.extraAttackLevel !== null &&
-                                     secondaryLevel >= (secondaryCls.features?.extraAttackLevel || 99);
+                                     secondaryLevel >= (secondaryCls.features?.extraAttackLevel || EXTRA_ATTACK_NEVER);
     if (!hasExtraAttackPrimary && !hasExtraAttackSecondary &&
         (primaryCls.features?.extraAttackLevel || secondaryCls.features?.extraAttackLevel)) {
       tradeoffs.push("No Extra Attack at this split");
