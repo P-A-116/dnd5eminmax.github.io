@@ -19,8 +19,8 @@ export const POINT_BUY_MAX_SCORE  = 15;
 export const MAX_LEVEL            = 20;
 export const MIN_LEVEL            = 1;
 export const MAX_MAGIC_BONUS      = 5;
-export const ABILITY_SCORE_MIN    = 3;  // PHB minimum
-export const ABILITY_SCORE_MAX    = 30; // PHB maximum
+export const ABILITY_SCORE_MIN    = 3;  // PHB minimum (rolled/manual); point-buy uses POINT_BUY_MIN_SCORE
+export const ABILITY_SCORE_MAX    = 30; // PHB maximum (includes magical enhancements)
 export const D20_SIDES            = 20;
 export const BASE_AC              = 10;
 export const MIN_HIT_CHANCE       = 0.05; // Natural 1 always misses
@@ -145,7 +145,8 @@ export function proficiencyBonus(level) {
 /**
  * Point-buy cost table for a single ability score.
  * Scores below 8 return 0; scores above 15 return 9 (max cost).
- * Table is indexed by (score − POINT_BUY_MIN_SCORE) so index 0 = score 8.
+ * PHB point-buy costs: 8→0, 9→1, 10→2, 11→3, 12→4, 13→5 (linear),
+ * 14→7, 15→9 (accelerating). Table indexed by (score − POINT_BUY_MIN_SCORE).
  */
 const _POINT_BUY_COST_TABLE = [0, 1, 2, 3, 4, 5, 7, 9]; // index 0 = score 8
 
