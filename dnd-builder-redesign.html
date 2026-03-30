@@ -1,0 +1,1048 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>D&D 5e SRD Builder — Redesign</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@700;800&family=JetBrains+Mono:wght@400;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+/* ── Design Tokens ─────────────────────────────────────────────────────── */
+:root {
+  --bg0: #0a0d14;
+  --bg1: #111520;
+  --bg2: #171c2d;
+  --bg3: #1d2338;
+  --bg4: #242a42;
+  --bd0: #1f2640;
+  --bd1: #2c3555;
+  --bd2: #3d4a70;
+  --bd3: #5568a0;
+  --tx0: #e8eaf2;
+  --tx1: #8892b0;
+  --tx2: #546180;
+  --ac0: #4f6ef7;
+  --ac1: #7b93ff;
+  --ac2: #1e2e7a;
+  --ok0: #22c984;
+  --ok1: #0d4f36;
+  --wa0: #f0a429;
+  --er0: #f05656;
+  --er1: #4d1414;
+  --nova: #c084fc;
+  --tank: #38bdf8;
+  --ctrl: #fb923c;
+  --skl:  #a3e635;
+  --r1: 4px; --r2: 6px; --r3: 8px; --r4: 12px;
+  --shadow: 0 4px 24px rgba(0,0,0,0.5);
+  --mono: 'JetBrains Mono', 'Courier New', monospace;
+  --sans: 'Inter', system-ui, sans-serif;
+  --display: 'Syne', 'Inter', sans-serif;
+}
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html { font-size: 13px; }
+body { font-family: var(--sans); background: var(--bg0); color: var(--tx0);
+       min-height: 100vh; line-height: 1.5; }
+
+/* ── Scrollbar ─────────────────────────────────────────────────────────── */
+::-webkit-scrollbar { width: 5px; height: 5px; }
+::-webkit-scrollbar-track { background: var(--bg0); }
+::-webkit-scrollbar-thumb { background: var(--bd2); border-radius: 3px; }
+
+/* ── Reset ─────────────────────────────────────────────────────────────── */
+button { font-family: var(--sans); cursor: pointer; }
+input, select, textarea { font-family: var(--sans); font-size: 12px;
+  background: var(--bg3); border: 1px solid var(--bd1); border-radius: var(--r2);
+  color: var(--tx0); padding: 5px 8px; outline: none; }
+input:focus, select:focus, textarea:focus {
+  border-color: var(--ac0);
+  box-shadow: 0 0 0 2px rgba(79,110,247,0.2); }
+textarea { resize: vertical; }
+input[type="checkbox"] { width: auto; accent-color: var(--ac0); cursor: pointer; }
+input[type="number"] { width: 70px; }
+
+/* ── Toolbar ───────────────────────────────────────────────────────────── */
+#toolbar {
+  position: sticky; top: 0; z-index: 100;
+  display: flex; align-items: center; gap: 4px;
+  background: var(--bg1); border-bottom: 1px solid var(--bd0);
+  padding: 0 16px; height: 48px;
+}
+#app-logo {
+  font-family: var(--display); font-weight: 800; font-size: 15px;
+  color: var(--ac1); letter-spacing: -0.02em; margin-right: 16px;
+}
+.nav-tab {
+  display: flex; align-items: center; gap: 5px;
+  padding: 0 12px; height: 48px; font-size: 12px; font-weight: 600;
+  color: var(--tx2); background: none; border: none;
+  border-bottom: 2px solid transparent; transition: all 0.15s;
+}
+.nav-tab:hover { color: var(--tx0); }
+.nav-tab.active { color: var(--ac1); border-bottom-color: var(--ac0); }
+.spacer { flex: 1; }
+.cmd-hint {
+  display: flex; align-items: center; gap: 6px;
+  padding: 4px 10px; border-radius: var(--r2);
+  background: var(--bg3); border: 1px solid var(--bd1);
+  color: var(--tx2); font-size: 11px; font-family: var(--mono);
+  cursor: pointer; transition: background 0.12s;
+}
+.cmd-hint:hover { background: var(--bg4); }
+
+/* ── Buttons ───────────────────────────────────────────────────────────── */
+.btn {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 6px 14px; font-size: 12px; font-weight: 600; border-radius: var(--r2);
+  background: transparent; border: 1px solid var(--bd1); color: var(--tx0);
+  transition: all 0.12s; white-space: nowrap;
+}
+.btn:hover { background: var(--bg3); border-color: var(--bd2); }
+.btn:active { transform: translateY(1px); }
+.btn.primary { background: var(--ac0); border-color: var(--ac1); color: #fff; }
+.btn.primary:hover { background: var(--ac1); }
+.btn.primary:disabled { background: var(--ac2); opacity: 0.5; cursor: not-allowed; transform: none; }
+.btn.sm { padding: 4px 10px; font-size: 11px; }
+.btn.danger { background: var(--er1); border-color: var(--er0); color: var(--er0); }
+
+/* ── Progress bar ──────────────────────────────────────────────────────── */
+#progress-bar-wrap { height: 2px; background: var(--bd0); display: none; }
+#progress-bar { height: 100%; background: linear-gradient(90deg, var(--ac0), var(--ac1));
+                width: 0; transition: width 0.1s; }
+
+/* ── Layout ────────────────────────────────────────────────────────────── */
+#layout {
+  display: grid; grid-template-columns: 1fr 360px;
+  gap: 12px; padding: 12px; max-width: 1400px; margin: 0 auto;
+  align-items: start;
+}
+@media (max-width: 900px) { #layout { grid-template-columns: 1fr; } }
+#col-left, #col-right { display: flex; flex-direction: column; gap: 10px; }
+#col-right { position: sticky; top: 52px; }
+
+/* ── Panel ─────────────────────────────────────────────────────────────── */
+.panel {
+  background: var(--bg1); border: 1px solid var(--bd1);
+  border-radius: var(--r4); overflow: hidden;
+}
+.panel.accent-blue  { border-top: 2px solid var(--ac0); }
+.panel.accent-green { border-top: 2px solid var(--ok0); }
+.panel.accent-nova  { border-top: 2px solid var(--nova); }
+.panel.accent-red   { border-top: 2px solid var(--er0); }
+.panel-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 10px 14px; border-bottom: 1px solid var(--bd0);
+}
+.panel-title {
+  font-size: 10px; font-weight: 700; letter-spacing: 0.1em;
+  text-transform: uppercase; color: var(--tx1);
+}
+.panel-body { padding: 14px; }
+
+/* ── Identity grid ─────────────────────────────────────────────────────── */
+.identity-grid { display: grid; grid-template-columns: repeat(4,1fr); gap: 10px; }
+.field-label { display: flex; flex-direction: column; gap: 3px; }
+.field-label span { font-size: 10px; color: var(--tx2); text-transform: uppercase;
+                    letter-spacing: 0.06em; }
+.field-label input, .field-label select { width: 100%; }
+
+/* ── Level timeline ────────────────────────────────────────────────────── */
+#level-timeline {
+  display: flex; align-items: flex-end; gap: 2px;
+  overflow-x: auto; padding-bottom: 4px;
+  position: relative;
+}
+#level-timeline::before {
+  content: ''; position: absolute; left: 0; right: 0; top: 20px;
+  height: 2px; background: var(--bd0); z-index: 0;
+}
+.lv-dot {
+  position: relative; z-index: 1; flex: 0 0 auto;
+  display: flex; flex-direction: column; align-items: center; gap: 3px;
+  cursor: pointer;
+}
+.lv-pip {
+  border-radius: 50%; border: 2px solid var(--bd1);
+  background: var(--bg3); display: flex; align-items: center;
+  justify-content: center; font-family: var(--mono); font-weight: 700;
+  transition: all 0.15s; font-size: 9px; color: var(--tx2);
+}
+.lv-pip.small { width: 16px; height: 16px; }
+.lv-pip.medium { width: 20px; height: 20px; font-size: 10px; }
+.lv-pip.large { width: 28px; height: 28px; font-size: 11px; }
+.lv-pip.past { background: rgba(79,110,247,0.2); border-color: var(--ac2); }
+.lv-pip.current { background: var(--ac0); border-color: var(--ac1); color: #fff;
+                  box-shadow: 0 0 12px rgba(79,110,247,0.5); }
+.lv-label { font-size: 8px; color: var(--tx2); text-align: center; width: 36px;
+            overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lv-label.current { color: var(--ac1); }
+
+/* ── Ability scores ────────────────────────────────────────────────────── */
+#ability-grid { display: grid; grid-template-columns: repeat(3,1fr); gap: 8px; }
+.ability-block {
+  background: var(--bg3); border: 1px solid var(--bd1);
+  border-radius: var(--r3); padding: 10px;
+  display: flex; flex-direction: column; align-items: center; gap: 4px;
+  transition: border-color 0.15s;
+}
+.ability-block:hover { border-color: var(--bd2); }
+.ability-key { font-size: 9px; font-weight: 700; letter-spacing: 0.1em;
+               color: var(--tx2); text-transform: uppercase; }
+.ability-score {
+  width: 52px; height: 36px; text-align: center;
+  font-size: 18px; font-weight: 700; font-family: var(--mono);
+  background: transparent; border: 1px solid var(--bd1);
+  border-radius: var(--r2); color: var(--tx0);
+}
+.ability-mod { font-size: 16px; font-weight: 700; color: var(--ac1);
+               font-family: var(--mono); }
+.ability-save { font-size: 9px; color: var(--tx2); }
+.ability-save.prof { color: var(--ok0); }
+.pb-info { font-size: 11px; color: var(--tx2); margin-top: 6px; text-align: center; }
+.pb-info.over { color: var(--er0); }
+
+/* ── Derived stats ─────────────────────────────────────────────────────── */
+#derived-row { display: flex; flex-wrap: wrap; gap: 6px; }
+.stat-chip {
+  background: var(--bg3); border: 1px solid var(--bd0);
+  border-radius: var(--r3); padding: 6px 10px;
+  display: flex; flex-direction: column; align-items: center;
+  min-width: 56px; flex: 1 1 56px;
+}
+.stat-chip .sv { font-size: 17px; font-weight: 700; font-family: var(--mono); line-height: 1.2; }
+.stat-chip .sl { font-size: 9px; color: var(--tx2); text-transform: uppercase;
+                 letter-spacing: 0.07em; margin-top: 1px; }
+
+/* ── DPR bar ───────────────────────────────────────────────────────────── */
+.dpr-bar-wrap { margin: 8px 0; }
+.dpr-bar-labels { display: flex; justify-content: space-between; margin-bottom: 4px;
+                  font-size: 10px; color: var(--tx2); }
+.dpr-bar-track { height: 6px; background: var(--bg3); border-radius: 99px;
+                 overflow: hidden; position: relative; }
+.dpr-bar-sus { position: absolute; left: 0; top: 0; height: 100%;
+               background: var(--ok0); border-radius: 99px;
+               transition: width 0.4s cubic-bezier(0.4,0,0.2,1); }
+.dpr-bar-burst { position: absolute; top: 0; height: 100%;
+                 background: var(--nova); border-radius: 0 99px 99px 0;
+                 transition: all 0.4s cubic-bezier(0.4,0,0.2,1); }
+
+/* ── Metrics grid ──────────────────────────────────────────────────────── */
+#metrics-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.metric-cell { background: var(--bg3); border-radius: var(--r2);
+               padding: 6px 10px; text-align: center; }
+.metric-cell .mv { font-size: 15px; font-weight: 700; font-family: var(--mono); }
+.metric-cell .ml { font-size: 8px; color: var(--tx2); text-transform: uppercase;
+                   letter-spacing: 0.07em; margin-top: 2px; }
+
+/* ── Radar chart ───────────────────────────────────────────────────────── */
+#radar-wrap { display: flex; justify-content: center; margin-bottom: 10px; }
+
+/* ── Result cards ──────────────────────────────────────────────────────── */
+#results-list { display: flex; flex-direction: column; gap: 8px; }
+.result-card {
+  background: var(--bg2); border: 1px solid var(--bd1);
+  border-left: 3px solid var(--bd1); border-radius: var(--r3); padding: 10px;
+  transition: border-color 0.15s;
+}
+.result-card.rank1 { border-color: var(--ac0); border-left-color: var(--ac0); }
+.result-card.multiclass { border-left-color: var(--nova); }
+.result-card.rank1.multiclass { border-color: var(--nova); }
+.result-header { display: flex; align-items: flex-start;
+                 justify-content: space-between; gap: 10px; margin-bottom: 6px; }
+.result-name { font-size: 12px; font-weight: 700; color: var(--tx0); }
+.result-rank { font-size: 10px; font-weight: 700; font-family: var(--mono); }
+.result-score { font-size: 17px; font-weight: 700; color: var(--ac1); font-family: var(--mono); }
+.result-tags { display: flex; flex-wrap: wrap; gap: 4px; margin: 5px 0; }
+.badge {
+  display: inline-flex; align-items: center; padding: 2px 6px;
+  border-radius: var(--r1); font-size: 9px; font-weight: 700;
+  letter-spacing: 0.06em; text-transform: uppercase; border: 1px solid transparent;
+}
+.badge.good { background: rgba(34,201,132,0.12); color: var(--ok0); border-color: rgba(34,201,132,0.25); }
+.badge.warn { background: rgba(240,164,41,0.12); color: var(--wa0); border-color: rgba(240,164,41,0.25); }
+.badge.multi { background: rgba(192,132,252,0.12); color: var(--nova); border-color: rgba(192,132,252,0.25); }
+.result-stats { display: flex; gap: 10px; flex-wrap: wrap; font-size: 10px;
+                color: var(--tx2); margin-top: 4px; }
+
+/* ── Command palette ───────────────────────────────────────────────────── */
+#cmd-overlay {
+  position: fixed; inset: 0; background: rgba(0,0,0,0.75);
+  display: none; align-items: flex-start; justify-content: center;
+  padding-top: 120px; z-index: 9999;
+}
+#cmd-overlay.open { display: flex; }
+#cmd-box {
+  width: 520px; background: var(--bg2); border: 1px solid var(--bd2);
+  border-radius: var(--r4); overflow: hidden; box-shadow: var(--shadow);
+}
+#cmd-input {
+  width: 100%; background: transparent; border: none;
+  padding: 14px 16px; font-size: 15px; color: var(--tx0); outline: none;
+  border-bottom: 1px solid var(--bd1);
+}
+.cmd-item {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 16px; cursor: pointer; border-bottom: 1px solid var(--bd0);
+  transition: background 0.1s;
+}
+.cmd-item:hover, .cmd-item.selected { background: var(--bg3); }
+.cmd-item:last-child { border-bottom: none; }
+.cmd-icon { font-size: 14px; width: 20px; text-align: center; }
+.cmd-label { flex: 1; font-size: 13px; color: var(--tx0); }
+.cmd-key { font-size: 11px; color: var(--tx2); font-family: var(--mono); }
+
+/* ── Weapons table ─────────────────────────────────────────────────────── */
+table { width: 100%; border-collapse: collapse; }
+th { font-size: 9px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase;
+     color: var(--tx2); padding: 4px 8px; border-bottom: 1px solid var(--bd0);
+     text-align: left; background: var(--bg0); }
+td { padding: 5px 8px; border-bottom: 1px solid var(--bd0); font-size: 12px;
+     vertical-align: middle; }
+tr:last-child td { border-bottom: none; }
+tr:hover td { background: var(--bg3); }
+td input, td select { padding: 3px 5px; font-size: 11px; }
+td input[type=number] { width: 52px; }
+
+/* ── Notes grid ────────────────────────────────────────────────────────── */
+.notes-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.notes-grid label { display: flex; flex-direction: column; gap: 3px; font-size: 10px;
+                    color: var(--tx2); letter-spacing: 0.06em; text-transform: uppercase; }
+.notes-grid textarea { width: 100%; background: var(--bg3); }
+
+/* ── Optimizer section ─────────────────────────────────────────────────── */
+.opt-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: flex-end; margin-bottom: 10px; }
+.opt-row .field-label { min-width: 120px; flex: 1; }
+.assump-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.assump-check { display: flex; align-items: center; gap: 6px;
+                font-size: 11px; color: var(--tx1); cursor: pointer; }
+
+/* ── IO ────────────────────────────────────────────────────────────────── */
+.io-row { display: flex; gap: 8px; margin-top: 8px; }
+
+/* ── Separator ─────────────────────────────────────────────────────────── */
+.sep { height: 1px; background: var(--bd0); margin: 10px 0; }
+</style>
+</head>
+<body>
+
+<!-- ── Command Palette ─────────────────────────────────────────────────── -->
+<div id="cmd-overlay" onclick="closePalette(event)">
+  <div id="cmd-box" onclick="event.stopPropagation()">
+    <input id="cmd-input" placeholder="Type a command…" autocomplete="off"
+      oninput="filterCmds()" onkeydown="cmdKeyNav(event)" />
+    <div id="cmd-list"></div>
+  </div>
+</div>
+
+<!-- ── Toolbar ──────────────────────────────────────────────────────────── -->
+<header id="toolbar">
+  <span id="app-logo">D&amp;D 5e SRD</span>
+
+  <button class="nav-tab active" onclick="switchTab('builder',this)">⚔ Builder</button>
+  <button class="nav-tab"        onclick="switchTab('combat',this)">🛡 Combat</button>
+  <button class="nav-tab"        onclick="switchTab('spells',this)">✨ Spells</button>
+  <button class="nav-tab"        onclick="switchTab('compare',this)">⚖ Compare</button>
+
+  <div class="spacer"></div>
+
+  <button class="cmd-hint" onclick="openPalette()">⌘K</button>
+  <button id="btn-optimize" class="btn primary" onclick="runOptimizer()">⚡ Optimize</button>
+  <button id="btn-cancel" class="btn danger" style="display:none" onclick="cancelOpt()">✕ Cancel</button>
+</header>
+
+<!-- ── Progress ──────────────────────────────────────────────────────────── -->
+<div id="progress-bar-wrap"><div id="progress-bar"></div></div>
+
+<!-- ── Layout ────────────────────────────────────────────────────────────── -->
+<div id="layout">
+
+  <!-- LEFT COLUMN ─────────────────────────────────────────────────────── -->
+  <div id="col-left">
+
+    <!-- Tab content panels -->
+    <div id="tab-builder">
+
+      <!-- Identity -->
+      <div class="panel">
+        <div class="panel-head">
+          <span class="panel-title">Identity</span>
+        </div>
+        <div class="panel-body">
+          <div class="identity-grid" style="margin-bottom:10px">
+            <div class="field-label"><span>Name</span><input id="f-name" type="text" value="Thalindra" oninput="update()"></div>
+            <div class="field-label"><span>Player</span><input id="f-player" type="text" oninput="update()"></div>
+            <div class="field-label"><span>Subclass</span><input id="f-subclass" type="text" value="Battle Master" oninput="update()"></div>
+            <div class="field-label"><span>Alignment</span>
+              <select id="f-align" oninput="update()">
+                <option>Lawful Good</option><option>Neutral Good</option><option>Chaotic Good</option>
+                <option>Lawful Neutral</option><option>True Neutral</option><option>Chaotic Neutral</option>
+                <option>Lawful Evil</option><option>Neutral Evil</option><option>Chaotic Evil</option>
+              </select>
+            </div>
+          </div>
+          <div class="identity-grid">
+            <div class="field-label"><span>Class</span>
+              <select id="f-class" onchange="update()">
+                <option value="barbarian">Barbarian</option><option value="bard">Bard</option>
+                <option value="cleric">Cleric</option><option value="druid">Druid</option>
+                <option value="fighter" selected>Fighter</option><option value="monk">Monk</option>
+                <option value="paladin">Paladin</option><option value="ranger">Ranger</option>
+                <option value="rogue">Rogue</option><option value="sorcerer">Sorcerer</option>
+                <option value="warlock">Warlock</option><option value="wizard">Wizard</option>
+              </select>
+            </div>
+            <div class="field-label"><span>Race</span>
+              <select id="f-race" onchange="update()">
+                <option>Human</option><option>Dwarf</option><option>Elf</option><option>Halfling</option>
+                <option>Dragonborn</option><option>Gnome</option><option>Half-Elf</option>
+                <option>Half-Orc</option><option>Tiefling</option><option>Custom</option>
+              </select>
+            </div>
+            <div class="field-label"><span>Background</span>
+              <select id="f-bg" onchange="update()">
+                <option>Acolyte</option><option>Criminal</option><option>Folk Hero</option>
+                <option>Noble</option><option>Sage</option><option selected>Soldier</option>
+                <option>Artisan</option><option>Entertainer</option><option>Hermit</option><option>Custom</option>
+              </select>
+            </div>
+            <div></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Level Timeline -->
+      <div class="panel accent-blue">
+        <div class="panel-head">
+          <span class="panel-title">Level Progression</span>
+          <span style="font-size:11px;color:var(--tx2)">Prof Bonus: <span id="d-pb" style="color:var(--ac1);font-family:var(--mono)">+3</span></span>
+        </div>
+        <div class="panel-body">
+          <div id="level-timeline"></div>
+          <div class="sep" style="margin-top:10px"></div>
+          <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--tx2)">
+            <span>Level <span id="d-level-label" style="color:var(--ac1);font-weight:700">8</span></span>
+            <span>Click a pip to change level</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Abilities -->
+      <div class="panel">
+        <div class="panel-head">
+          <span class="panel-title">Ability Scores</span>
+          <div style="display:flex;gap:6px;align-items:center">
+            <select id="f-ab-mode" onchange="update()" style="font-size:11px;padding:3px 6px">
+              <option value="standard">Standard Array</option>
+              <option value="pointbuy">Point Buy</option>
+              <option value="manual">Manual</option>
+            </select>
+            <button class="btn sm" onclick="applyStdArray()">Apply SA</button>
+            <button class="btn sm" onclick="autoPB()">Auto PB</button>
+          </div>
+        </div>
+        <div class="panel-body">
+          <div id="ability-grid"></div>
+          <div id="pb-info" class="pb-info"></div>
+        </div>
+      </div>
+
+      <!-- Derived Stats -->
+      <div class="panel">
+        <div class="panel-head"><span class="panel-title">Derived Stats</span></div>
+        <div class="panel-body">
+          <div id="derived-row"></div>
+          <!-- DPR Bar -->
+          <div class="dpr-bar-wrap" style="margin-top:10px">
+            <div class="dpr-bar-labels">
+              <span>DPR Model</span>
+              <span>
+                <span id="d-sus-val" style="color:var(--ok0);font-family:var(--mono)">—</span>
+                <span style="color:var(--tx2)"> sustain </span>
+                <span id="d-burst-val" style="color:var(--nova);font-family:var(--mono)">—</span>
+                <span style="color:var(--tx2)"> burst R1</span>
+              </span>
+            </div>
+            <div class="dpr-bar-track">
+              <div class="dpr-bar-sus" id="dpr-sus-bar" style="width:0%"></div>
+              <div class="dpr-bar-burst" id="dpr-burst-bar" style="left:0%;width:0%"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Notes & Traits -->
+      <div class="panel">
+        <div class="panel-head"><span class="panel-title">Notes & Traits</span></div>
+        <div class="panel-body">
+          <div class="notes-grid">
+            <label>Features<textarea id="f-features" rows="3">Action Surge (1/rest)\nSecond Wind (1/rest)\nBattle Master Maneuvers</textarea></label>
+            <label>Traits<textarea id="f-traits" rows="3">I face problems head-on.</textarea></label>
+            <label>Notes<textarea id="f-notes" rows="3"></textarea></label>
+            <label>Equipment<textarea id="f-equip" rows="3">Chain Mail, Shield, Longsword +1, Hand Crossbow</textarea></label>
+          </div>
+        </div>
+      </div>
+
+    </div><!-- /tab-builder -->
+
+    <div id="tab-combat" style="display:none">
+      <div class="panel accent-red">
+        <div class="panel-head"><span class="panel-title">Combat Simulator</span></div>
+        <div class="panel-body" style="text-align:center;padding:40px 0">
+          <div style="font-size:40px;margin-bottom:12px">🛡</div>
+          <div style="color:var(--tx2)">Combat engine connected to your built character.</div>
+          <div style="color:var(--tx2);margin-top:6px">Configure assumptions in the Optimizer panel, then run.</div>
+          <div class="dpr-bar-wrap" style="max-width:400px;margin:20px auto 0">
+            <div class="dpr-bar-labels"><span>Projected DPR</span></div>
+            <div class="dpr-bar-track">
+              <div class="dpr-bar-sus" id="dpr-sus-bar2" style="width:48%"></div>
+              <div class="dpr-bar-burst" id="dpr-burst-bar2" style="left:48%;width:22%"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div id="tab-spells" style="display:none">
+      <div class="panel accent-nova">
+        <div class="panel-head"><span class="panel-title">Spellcasting</span></div>
+        <div class="panel-body" style="text-align:center;padding:40px 0;color:var(--tx2)">
+          ✨ Spell search + context-aware recommendations in full implementation.
+        </div>
+      </div>
+    </div>
+
+    <div id="tab-compare" style="display:none">
+      <div class="panel">
+        <div class="panel-head"><span class="panel-title">Build Comparison</span></div>
+        <div class="panel-body" style="text-align:center;padding:40px 0;color:var(--tx2)">
+          Run the optimizer to generate builds, then compare them side-by-side.
+        </div>
+      </div>
+    </div>
+
+  </div><!-- /col-left -->
+
+  <!-- RIGHT COLUMN ────────────────────────────────────────────────────── -->
+  <div id="col-right">
+
+    <!-- Current Build Metrics -->
+    <div class="panel accent-green">
+      <div class="panel-head"><span class="panel-title">Build Metrics</span></div>
+      <div class="panel-body">
+        <div id="radar-wrap">
+          <svg id="radar-svg" viewBox="0 0 220 220" width="200" height="200"></svg>
+        </div>
+        <div class="sep"></div>
+        <div id="metrics-grid"></div>
+      </div>
+    </div>
+
+    <!-- Optimizer -->
+    <div class="panel">
+      <div class="panel-head"><span class="panel-title">Optimizer</span></div>
+      <div class="panel-body">
+        <div class="opt-row">
+          <div class="field-label" style="min-width:150px;flex:1">
+            <span>Objective</span>
+            <select id="f-objective" onchange="">
+              <option value="sustained_dpr">⚔ Sustained DPR</option>
+              <option value="nova_dpr">⚡ Nova / Burst</option>
+              <option value="tank">🛡 Durability</option>
+              <option value="controller">🌀 Controller</option>
+              <option value="skill">🧠 Skill Monkey</option>
+              <option value="balanced">⚖ Balanced</option>
+            </select>
+          </div>
+        </div>
+        <div class="assump-grid" style="margin-bottom:10px">
+          <div class="field-label"><span>Target AC</span><input type="number" value="15"></div>
+          <div class="field-label"><span>Adv Rate %</span><input type="number" value="25"></div>
+          <div class="field-label"><span>Encounters/Day</span><input type="number" value="4"></div>
+          <div class="field-label"><span>Short Rests</span><input type="number" value="2"></div>
+          <div class="field-label"><span>Weapon +Mag</span><input type="number" value="1"></div>
+          <div class="field-label"><span>Analysis Lvl</span><input type="number" id="f-anal-level" value="8"></div>
+        </div>
+        <div style="display:flex;gap:12px;margin-bottom:12px">
+          <label class="assump-check"><input type="checkbox" checked> Feats</label>
+          <label class="assump-check"><input type="checkbox" checked> Multiclass</label>
+        </div>
+        <button class="btn primary" style="width:100%" onclick="runOptimizer()">⚡ Run Optimizer</button>
+      </div>
+    </div>
+
+    <!-- Results -->
+    <div class="panel" id="results-panel" style="display:none">
+      <div class="panel-head">
+        <span class="panel-title">Top Builds</span>
+        <span id="results-note" style="font-size:10px;color:var(--tx2)"></span>
+      </div>
+      <div class="panel-body">
+        <div id="results-list"></div>
+      </div>
+    </div>
+
+    <!-- Import / Export -->
+    <div class="panel">
+      <div class="panel-head"><span class="panel-title">Import / Export</span></div>
+      <div class="panel-body">
+        <textarea id="f-import" rows="3" placeholder="Paste exported JSON here…" style="width:100%"></textarea>
+        <div class="io-row">
+          <button class="btn" onclick="doImport()">⬆ Import</button>
+          <button class="btn" onclick="doExport()">⬇ Export</button>
+        </div>
+      </div>
+    </div>
+
+  </div><!-- /col-right -->
+
+</div><!-- /layout -->
+
+<script>
+// ── State ──────────────────────────────────────────────────────────────────
+const ABILITIES = ['str','dex','con','int','wis','cha'];
+const AB_LABELS  = { str:'STR',dex:'DEX',con:'CON',int:'INT',wis:'WIS',cha:'CHA' };
+const PROF_SAVES = { fighter:['str','con'], paladin:['wis','cha'], barbarian:['str','con'],
+  bard:['dex','cha'], cleric:['wis','cha'], druid:['int','wis'], monk:['str','dex'],
+  ranger:['str','dex'], rogue:['dex','int'], sorcerer:['con','cha'],
+  warlock:['wis','cha'], wizard:['int','wis'] };
+const STD_ARRAY = [15,14,13,12,10,8];
+const MILESTONES = {1:'Base',3:'Subclass',4:'ASI',5:'Xtra Atk',8:'ASI',10:'Feature',12:'ASI',19:'ASI',20:'Capstone'};
+const PB_COST = {8:0,9:1,10:2,11:3,12:4,13:5,14:7,15:9};
+
+let S = {
+  level: 8, cls: 'fighter',
+  abs: {str:18,dex:14,con:16,int:10,wis:12,cha:8},
+};
+let cancelToken = false;
+let optTimer = null;
+
+// ── Math ───────────────────────────────────────────────────────────────────
+const mod = s => Math.floor((s-10)/2);
+const sign = n => n>=0 ? `+${n}` : `${n}`;
+const pb  = lv => Math.ceil(lv/4)+1;
+const fmt1 = n => typeof n==='number' && isFinite(n) ? n.toFixed(1) : '—';
+const clamp = (n,a,b) => Math.max(a,Math.min(b,n));
+
+function derived() {
+  const lv = S.level, ab = S.abs, cls = S.cls;
+  const strM=mod(ab.str),dexM=mod(ab.dex),conM=mod(ab.con);
+  const intM=mod(ab.int),wisM=mod(ab.wis),chaM=mod(ab.cha);
+  const p = pb(lv);
+  const HD = {barbarian:12,fighter:10,paladin:10,ranger:10,bard:8,cleric:8,druid:8,monk:8,rogue:8,warlock:8,sorcerer:6,wizard:6};
+  const hd = HD[cls]||8;
+  const hp = hd+conM+(lv-1)*(Math.ceil(hd/2)+1+conM);
+  const heavyCls = ['fighter','paladin','cleric'];
+  const medCls   = ['barbarian','ranger','druid'];
+  const ac = heavyCls.includes(cls)?18:medCls.includes(cls)?15:13;
+  const primMod = ['bard','ranger','rogue','monk','druid','sorcerer','warlock','wizard'].includes(cls)?dexM:strM;
+  const atk = p+primMod+1;
+  const castMods = {bard:chaM,cleric:wisM,druid:wisM,paladin:chaM,ranger:wisM,sorcerer:chaM,warlock:chaM,wizard:intM};
+  const cstM = castMods[cls]??0;
+  const spellAtk = p+cstM+1;
+  const spellDC  = 8+p+cstM+1;
+  const initiative = dexM;
+  const attacks = lv>=5?2:1;
+  const hitChance = clamp((atk+21-ac)/20, 0.05, 0.95);
+  const avgDie = primMod===strM?5.5:4.5;
+  const sus = hitChance*(avgDie+primMod+1)*attacks;
+  const bst = cls==='fighter'?sus*1.6:cls==='paladin'?sus*1.8:sus*1.2;
+  const ehp = hp*(1+(ac-15)*0.07);
+  const ctrl = ['wizard','druid','cleric','sorcerer'].includes(cls)?10:2;
+  const skill= ['rogue','bard'].includes(cls)?25:10;
+  return {hp,ac,atk,spellAtk,spellDC,initiative,p,attacks,sus,bst,ehp,ctrl,skill};
+}
+
+// ── Render ─────────────────────────────────────────────────────────────────
+function renderTimeline() {
+  const wrap = document.getElementById('level-timeline');
+  wrap.innerHTML = '';
+  for(let lv=1;lv<=20;lv++){
+    const isCur  = lv===S.level;
+    const isPast = lv<S.level;
+    const ms     = MILESTONES[lv];
+    const sz     = isCur?'large':ms?'medium':'small';
+    const dot = document.createElement('div');
+    dot.className = 'lv-dot';
+    dot.onclick = ()=>{ S.level=lv; update(); };
+    const pip = document.createElement('div');
+    pip.className = `lv-pip ${sz} ${isCur?'current':isPast?'past':''}`;
+    pip.textContent = lv;
+    dot.appendChild(pip);
+    if(ms||isCur){
+      const lbl = document.createElement('div');
+      lbl.className = `lv-label ${isCur?'current':''}`;
+      lbl.textContent = isCur?`Lv ${lv}`:ms;
+      dot.appendChild(lbl);
+    }
+    wrap.appendChild(dot);
+  }
+  document.getElementById('d-pb').textContent = sign(pb(S.level));
+  document.getElementById('d-level-label').textContent = S.level;
+}
+
+function renderAbilities() {
+  const grid = document.getElementById('ability-grid');
+  grid.innerHTML = '';
+  const mode = document.getElementById('f-ab-mode').value;
+  const saves = PROF_SAVES[S.cls]||[];
+  let totalPB = 0;
+  ABILITIES.forEach(key => {
+    const score = S.abs[key]??10;
+    const m = mod(score);
+    const hasSave = saves.includes(key);
+    totalPB += PB_COST[score]??0;
+    const div = document.createElement('div');
+    div.className = 'ability-block';
+    div.innerHTML = `
+      <span class="ability-key">${AB_LABELS[key]}</span>
+      <input class="ability-score" type="number" min="3" max="30" value="${score}"
+        onchange="setAb('${key}',this.value)">
+      <span class="ability-mod" style="color:var(--ac1)">${sign(m)}</span>
+      <span class="ability-save ${hasSave?'prof':''}">${hasSave?'●':'○'} SAVE ${sign(hasSave?m+pb(S.level):m)}</span>
+    `;
+    grid.appendChild(div);
+  });
+  // PB info
+  const pbInfo = document.getElementById('pb-info');
+  if(mode==='pointbuy'){
+    pbInfo.textContent = `Point Buy: ${totalPB} / 27 used`;
+    pbInfo.className = 'pb-info' + (totalPB>27?' over':'');
+    pbInfo.style.display='block';
+  } else {
+    pbInfo.style.display='none';
+  }
+}
+
+function renderDerived() {
+  const d = derived();
+  const row = document.getElementById('derived-row');
+  const chips = [
+    ['HP',    d.hp,              'var(--ok0)'],
+    ['AC',    d.ac,              'var(--tank)'],
+    ['Init',  sign(d.initiative),'var(--ac1)'],
+    ['Atk',   sign(d.atk),       'var(--ok0)'],
+    ['Prof',  sign(d.p),         'var(--ac1)'],
+    ['Speed', '30ft',            'var(--tx1)'],
+    ['Spell Atk', sign(d.spellAtk),'var(--nova)'],
+    ['DC',    d.spellDC,         'var(--nova)'],
+  ];
+  row.innerHTML = chips.map(([l,v,c])=>`
+    <div class="stat-chip">
+      <span class="sv" style="color:${c}">${v}</span>
+      <span class="sl">${l}</span>
+    </div>`).join('');
+
+  // DPR bars
+  const maxDPR = 50;
+  const susW   = Math.min(100,(d.sus/maxDPR)*100);
+  const burstW = Math.min(100,((d.bst-d.sus)/maxDPR)*100);
+  document.getElementById('dpr-sus-bar').style.width = susW+'%';
+  document.getElementById('dpr-burst-bar').style.left  = susW+'%';
+  document.getElementById('dpr-burst-bar').style.width = Math.max(0,burstW)+'%';
+  document.getElementById('d-sus-val').textContent   = fmt1(d.sus);
+  document.getElementById('d-burst-val').textContent = fmt1(d.bst);
+}
+
+function renderMetrics() {
+  const d = derived();
+  const metrics = [
+    ['Sustained DPR', d.sus,  'var(--ok0)'],
+    ['Burst R1 DPR',  d.bst,  'var(--nova)'],
+    ['Effective HP',  d.ehp,  'var(--tank)'],
+    ['Control',       d.ctrl, 'var(--ctrl)'],
+    ['Skill Score',   d.skill,'var(--skl)'],
+    ['Initiative',    sign(d.initiative),'var(--ac1)'],
+  ];
+  document.getElementById('metrics-grid').innerHTML = metrics.map(([l,v,c])=>`
+    <div class="metric-cell">
+      <div class="mv" style="color:${c}">${typeof v==='number'?fmt1(v):v}</div>
+      <div class="ml">${l}</div>
+    </div>`).join('');
+  renderRadar(d);
+}
+
+function renderRadar(d) {
+  const svg   = document.getElementById('radar-svg');
+  const keys  = ['sus','bst','ehp','ctrl','skill','initiative'];
+  const labels= ['Sustained','Burst','Tank','Control','Skill','Init'];
+  const colors= ['var(--ok0)','var(--nova)','var(--tank)','var(--ctrl)','var(--skl)','var(--ac1)'];
+  const maxV  = {sus:40,bst:60,ehp:150,ctrl:20,skill:30,initiative:10};
+  const cx=110,cy=110,r=75;
+  const step  = (Math.PI*2)/keys.length;
+  const pts   = keys.map((k,i)=>{
+    const a = i*step - Math.PI/2;
+    const frac = Math.min(1,(d[k]||Math.abs(d[k]||0))/(maxV[k]||1));
+    return {
+      x: cx+Math.cos(a)*r*frac, y: cy+Math.sin(a)*r*frac,
+      lx:cx+Math.cos(a)*(r+22), ly:cy+Math.sin(a)*(r+22),
+      c: colors[i], label: labels[i],
+    };
+  });
+  const poly = pts.map(p=>`${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(' ');
+  let html = '';
+  // grid rings
+  [0.25,0.5,0.75,1].forEach(f=>{
+    html += `<circle cx="${cx}" cy="${cy}" r="${r*f}" fill="none" stroke="#1f2640" stroke-width="0.5"/>`;
+  });
+  // spokes
+  for(let i=0;i<6;i++){
+    const a = i*step-Math.PI/2;
+    html += `<line x1="${cx}" y1="${cy}" x2="${(cx+Math.cos(a)*r).toFixed(1)}" y2="${(cy+Math.sin(a)*r).toFixed(1)}" stroke="#1f2640" stroke-width="0.5"/>`;
+  }
+  // filled area
+  html += `<polygon points="${poly}" fill="rgba(79,110,247,0.2)" stroke="var(--ac0)" stroke-width="1.5"/>`;
+  // dots
+  pts.forEach((p,i)=>{
+    html += `<circle cx="${p.x.toFixed(1)}" cy="${p.y.toFixed(1)}" r="3" fill="${p.c}" stroke="#171c2d" stroke-width="1"/>`;
+  });
+  // labels
+  pts.forEach((p,i)=>{
+    const anchor = p.lx < cx-10 ? 'end' : p.lx > cx+10 ? 'start' : 'middle';
+    html += `<text x="${p.lx.toFixed(1)}" y="${(p.ly+4).toFixed(1)}" text-anchor="${anchor}" font-size="8" fill="#546180" font-family="var(--sans)">${p.label}</text>`;
+  });
+  svg.innerHTML = html;
+}
+
+function update() {
+  S.cls   = document.getElementById('f-class').value;
+  S.level = parseInt(document.getElementById('f-anal-level')?.value||'8') || S.level;
+  renderTimeline();
+  renderAbilities();
+  renderDerived();
+  renderMetrics();
+}
+
+function setAb(key, val) {
+  S.abs[key] = clamp(parseInt(val)||10,3,30);
+  update();
+}
+
+function applyStdArray() {
+  const keys = ABILITIES;
+  keys.forEach((k,i) => S.abs[k] = STD_ARRAY[i]);
+  update();
+}
+
+function autoPB() {
+  const cls = S.cls;
+  const prio = {
+    barbarian:['str','con'],fighter:['str','con'],paladin:['str','cha'],
+    bard:['cha','dex'],cleric:['wis','con'],druid:['wis','con'],
+    monk:['dex','wis'],ranger:['dex','wis'],rogue:['dex','int'],
+    sorcerer:['cha','con'],warlock:['cha','con'],wizard:['int','con'],
+  };
+  const ordered = prio[cls]||['str','dex','con','int','wis','cha'];
+  const all = ABILITIES.slice().sort((a,b)=>{
+    const ai = ordered.indexOf(a), bi = ordered.indexOf(b);
+    if(ai===-1 && bi===-1) return 0;
+    if(ai===-1) return 1;
+    if(bi===-1) return -1;
+    return ai-bi;
+  });
+  const vals = [15,14,13,12,10,8];
+  all.forEach((k,i) => S.abs[k] = vals[i]);
+  update();
+}
+
+// ── Optimizer ──────────────────────────────────────────────────────────────
+function runOptimizer() {
+  if(optTimer) return;
+  cancelToken = false;
+  document.getElementById('btn-optimize').disabled = true;
+  document.getElementById('btn-cancel').style.display='';
+  document.getElementById('progress-bar-wrap').style.display='';
+  let p=0;
+  optTimer = setInterval(()=>{
+    if(cancelToken){ clearTimer(); return; }
+    p += 5 + Math.random()*3;
+    document.getElementById('progress-bar').style.width = Math.min(p,98)+'%';
+    if(p>=100){ clearTimer(); showResults(); }
+  }, 80);
+}
+
+function cancelOpt(){ cancelToken=true; clearTimer(); }
+
+function clearTimer(){
+  clearInterval(optTimer); optTimer=null;
+  document.getElementById('btn-optimize').disabled=false;
+  document.getElementById('btn-cancel').style.display='none';
+  document.getElementById('progress-bar-wrap').style.display='none';
+  document.getElementById('progress-bar').style.width='0%';
+}
+
+function showResults(){
+  const d = derived();
+  const builds = [
+    {
+      label:`Fighter ${S.level} (Battle Master)`, score:28.4, isMulti:false,
+      sus:d.sus, bst:d.bst, ehp:d.ehp, ctrl:d.ctrl, skill:d.skill, init:d.initiative,
+      strengths:['high dpr','action surge'], weaknesses:[]
+    },{
+      label:`Paladin 6 / Sorcerer 2`, score:25.8, isMulti:true,
+      sus:d.sus*0.76, bst:d.bst*1.15, ehp:d.ehp*0.87, ctrl:5, skill:6, init:1,
+      strengths:['burst','divine smite'], weaknesses:['glass jaw']
+    },{
+      label:`Fighter 5 / Champion`, score:23.1, isMulti:false,
+      sus:d.sus*0.9, bst:d.bst*0.78, ehp:d.ehp*0.94, ctrl:1, skill:7, init:3,
+      strengths:['crits'], weaknesses:[]
+    },
+  ];
+
+  const panel = document.getElementById('results-panel');
+  const list  = document.getElementById('results-list');
+  document.getElementById('results-note').textContent = `${builds.length} builds · sorted by score`;
+  list.innerHTML = '';
+  builds.forEach((r,i)=>{
+    const card = document.createElement('div');
+    card.className = `result-card${i===0?' rank1':''}${r.isMulti?' multiclass':''}`;
+    const susW  = Math.min(100,(r.sus/40)*100);
+    const burstW= Math.min(100,((r.bst-r.sus)/40)*100);
+    card.innerHTML = `
+      <div class="result-header">
+        <div>
+          <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px">
+            <span class="result-rank" style="color:${['var(--wa0)','#aaa','#cd7f32'][i]}">#${i+1}</span>
+            <span class="result-name">${r.label}</span>
+            ${r.isMulti?'<span class="badge multi">Multiclass</span>':''}
+          </div>
+          <div class="result-tags">
+            ${r.strengths.map(s=>`<span class="badge good">${s}</span>`).join('')}
+            ${r.weaknesses.map(w=>`<span class="badge warn">${w}</span>`).join('')}
+          </div>
+        </div>
+        <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px">
+          <span class="result-score">${r.score.toFixed(1)}</span>
+          <button class="btn sm primary" onclick="applyBuild(${i})">Apply</button>
+        </div>
+      </div>
+      <div class="dpr-bar-wrap">
+        <div class="dpr-bar-labels">
+          <span></span>
+          <span>
+            <span style="color:var(--ok0);font-family:var(--mono)">${fmt1(r.sus)}</span>
+            <span style="color:var(--tx2)"> sus </span>
+            <span style="color:var(--nova);font-family:var(--mono)">${fmt1(r.bst)}</span>
+            <span style="color:var(--tx2)"> burst</span>
+          </span>
+        </div>
+        <div class="dpr-bar-track">
+          <div class="dpr-bar-sus" style="width:${susW}%"></div>
+          <div class="dpr-bar-burst" style="left:${susW}%;width:${Math.max(0,burstW)}%"></div>
+        </div>
+      </div>
+      <div class="result-stats">
+        <span>EHP: <span style="color:var(--tank);font-family:var(--mono)">${fmt1(r.ehp)}</span></span>
+        <span>Ctrl: <span style="color:var(--ctrl);font-family:var(--mono)">${fmt1(r.ctrl)}</span></span>
+        <span>Skill: <span style="color:var(--skl);font-family:var(--mono)">${fmt1(r.skill)}</span></span>
+        <span>Init: <span style="color:var(--ac1);font-family:var(--mono)">${sign(r.init)}</span></span>
+      </div>`;
+    list.appendChild(card);
+  });
+  panel.style.display='';
+}
+
+function applyBuild(idx) {
+  // In real implementation: patch state with optimizer result
+  alert('In the full implementation, this applies the optimizer result to the builder.');
+}
+
+// ── Import / Export ────────────────────────────────────────────────────────
+function doExport(){
+  const json = JSON.stringify({ level:S.level, cls:S.cls, abs:S.abs }, null, 2);
+  document.getElementById('f-import').value = json;
+  navigator.clipboard?.writeText(json);
+}
+function doImport(){
+  try{
+    const raw = JSON.parse(document.getElementById('f-import').value);
+    if(raw.level) S.level = raw.level;
+    if(raw.cls) S.cls = raw.cls;
+    if(raw.abs) S.abs = raw.abs;
+    document.getElementById('f-class').value = S.cls;
+    update();
+  } catch(e){ alert('Invalid JSON'); }
+}
+
+// ── Tab switching ──────────────────────────────────────────────────────────
+function switchTab(id, btn){
+  ['builder','combat','spells','compare'].forEach(t=>{
+    const el = document.getElementById(`tab-${t}`);
+    if(el) el.style.display = t===id?'':'none';
+  });
+  document.querySelectorAll('.nav-tab').forEach(b=>b.classList.remove('active'));
+  if(btn) btn.classList.add('active');
+}
+
+// ── Command Palette ────────────────────────────────────────────────────────
+const CMDS = [
+  {id:'optimize', icon:'⚡', label:'Run optimizer',         key:'⌘⏎'},
+  {id:'apply',    icon:'✔', label:'Apply top build',        key:'⌘⇧A'},
+  {id:'export',   icon:'⬇', label:'Export JSON',            key:'⌘E'},
+  {id:'reset',    icon:'↺', label:'Reset character',        key:'⌘⇧R'},
+  {id:'std',      icon:'🎲', label:'Apply standard array',  key:'⌘⇧S'},
+  {id:'autopb',   icon:'📊', label:'Auto point buy',        key:'⌘P'},
+  {id:'tab1',     icon:'⚔', label:'Go to Builder',          key:'⌘1'},
+  {id:'tab2',     icon:'🛡', label:'Go to Combat Sim',      key:'⌘2'},
+  {id:'tab3',     icon:'✨', label:'Go to Spells',           key:'⌘3'},
+  {id:'tab4',     icon:'⚖', label:'Go to Compare',         key:'⌘4'},
+];
+let cmdSel = 0, filteredCmds = [...CMDS];
+
+function openPalette(){
+  document.getElementById('cmd-overlay').classList.add('open');
+  document.getElementById('cmd-input').value='';
+  filteredCmds = [...CMDS]; cmdSel=0;
+  renderCmds();
+  document.getElementById('cmd-input').focus();
+}
+function closePalette(e){
+  if(!e||e.target===document.getElementById('cmd-overlay'))
+    document.getElementById('cmd-overlay').classList.remove('open');
+}
+function filterCmds(){
+  const q = document.getElementById('cmd-input').value.toLowerCase();
+  filteredCmds = CMDS.filter(c=>c.label.toLowerCase().includes(q));
+  cmdSel=0; renderCmds();
+}
+function renderCmds(){
+  document.getElementById('cmd-list').innerHTML = filteredCmds.map((c,i)=>`
+    <div class="cmd-item${i===cmdSel?' selected':''}" onclick="execCmd('${c.id}')">
+      <span class="cmd-icon">${c.icon}</span>
+      <span class="cmd-label">${c.label}</span>
+      <span class="cmd-key">${c.key}</span>
+    </div>`).join('')||'<div style="padding:14px;text-align:center;color:var(--tx2);font-size:13px">No commands found</div>';
+}
+function cmdKeyNav(e){
+  if(e.key==='Escape'){closePalette(); return;}
+  if(e.key==='ArrowDown'){cmdSel=Math.min(cmdSel+1,filteredCmds.length-1);renderCmds();}
+  if(e.key==='ArrowUp'){cmdSel=Math.max(cmdSel-1,0);renderCmds();}
+  if(e.key==='Enter'&&filteredCmds[cmdSel]){execCmd(filteredCmds[cmdSel].id);}
+}
+function execCmd(id){
+  closePalette();
+  if(id==='optimize') runOptimizer();
+  else if(id==='std') applyStdArray();
+  else if(id==='autopb') autoPB();
+  else if(id==='export') doExport();
+  else if(id==='tab1') document.querySelector('.nav-tab:nth-child(2)').click();
+  else if(id==='tab2') document.querySelector('.nav-tab:nth-child(3)').click();
+  else if(id==='tab3') document.querySelector('.nav-tab:nth-child(4)').click();
+  else if(id==='tab4') document.querySelector('.nav-tab:nth-child(5)').click();
+}
+
+// ── Global keyboard shortcuts ──────────────────────────────────────────────
+document.addEventListener('keydown', e=>{
+  if((e.metaKey||e.ctrlKey)&&e.key==='k'){ e.preventDefault(); openPalette(); }
+  if((e.metaKey||e.ctrlKey)&&e.key==='Enter'){ e.preventDefault(); runOptimizer(); }
+});
+
+// ── Live-update on class/level change ─────────────────────────────────────
+document.getElementById('f-class').onchange = ()=>{ S.cls=document.getElementById('f-class').value; update(); };
+
+// ── Boot ──────────────────────────────────────────────────────────────────
+update();
+</script>
+</body>
+</html>
