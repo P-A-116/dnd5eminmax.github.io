@@ -180,12 +180,12 @@ button { font-family: var(--sans); cursor: pointer; }
 }
 @media (max-width: 900px) { #layout { grid-template-columns: 1fr; } }
 #col-left, #col-right { display: flex; flex-direction: column; gap: 10px; }
-#col-right { position: sticky; top: 52px; max-height: calc(100vh - 60px); overflow-y: auto; }
+#col-right { position: sticky; top: 52px; max-height: calc(100vh - 60px); overflow-y: auto; padding-bottom: 20px; }
 
 /* ── Panel ─────────────────────────────────────────────────────────────── */
 .panel {
   background: var(--bg1); border: 1px solid var(--bd1);
-  border-radius: var(--r4); overflow: hidden;
+  border-radius: var(--r4); overflow: visible;
 }
 .panel.accent-blue  { border-top: 2px solid var(--ac0); }
 .panel.accent-green { border-top: 2px solid var(--ok0); }
@@ -314,6 +314,7 @@ td input[type=text] { width: 80px; }
 .del-btn:hover { color: var(--er0); background: none; }
 
 /* Spell slots table */
+#slots-table { display: block; overflow-x: auto; width: 100%; }
 #slots-table th, #slots-table td { text-align: center; padding: 3px 5px; }
 #slots-table td input { width: 36px; text-align: center; }
 
