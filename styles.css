@@ -427,3 +427,72 @@ td input[type=text] { width: 80px; }
 .cmd-icon { font-size: 14px; width: 20px; text-align: center; }
 .cmd-label { flex: 1; font-size: 13px; color: var(--tx0); }
 .cmd-key { font-size: 11px; color: var(--tx2); font-family: var(--mono); }
+
+/* ── Analysis Tab ──────────────────────────────────────────────────────── */
+.an-section-label {
+  font-size: 9px; font-weight: 700; letter-spacing: 0.1em;
+  text-transform: uppercase; color: var(--tx2); margin-bottom: 8px;
+}
+.an-metric-row {
+  display: flex; align-items: center; gap: 8px; margin-bottom: 7px;
+}
+.an-metric-label {
+  font-size: 11px; color: var(--tx1); min-width: 92px; flex-shrink: 0;
+}
+.an-metric-bar-wrap {
+  flex: 1; height: 5px; background: var(--bg3);
+  border-radius: 99px; overflow: hidden;
+}
+.an-metric-bar {
+  height: 100%; border-radius: 99px;
+  transition: width 0.4s cubic-bezier(0.4,0,0.2,1);
+}
+.an-metric-value {
+  font-size: 12px; font-weight: 700; font-family: var(--mono);
+  min-width: 38px; text-align: right;
+}
+.an-score-row {
+  display: flex; justify-content: space-between; align-items: center;
+}
+.an-milestone-table th { background: var(--bg0); }
+.an-milestone-current td { background: rgba(79,110,247,0.08); }
+
+/* ── Compare Tab ───────────────────────────────────────────────────────── */
+.cmp-table { width: 100%; border-collapse: collapse; }
+.cmp-metric-head {
+  font-size: 9px; font-weight: 700; text-transform: uppercase;
+  letter-spacing: 0.08em; color: var(--tx2); padding: 8px 12px;
+  background: var(--bg0); border-bottom: 1px solid var(--bd0); white-space: nowrap;
+}
+.cmp-col-head {
+  font-size: 11px; padding: 8px 10px; text-align: center;
+  background: var(--bg0); border-bottom: 1px solid var(--bd0);
+  border-left: 1px solid var(--bd0); min-width: 100px;
+}
+.cmp-rank {
+  font-size: 10px; font-weight: 700; font-family: var(--mono); margin-bottom: 2px;
+}
+.cmp-class-label {
+  font-size: 11px; font-weight: 600; color: var(--tx0);
+  line-height: 1.3; word-break: break-word;
+}
+.cmp-metric-label {
+  font-size: 11px; font-weight: 600; color: var(--tx1);
+  padding: 6px 12px; border-bottom: 1px solid var(--bd0); white-space: nowrap;
+}
+.cmp-cell {
+  padding: 6px 10px; border-bottom: 1px solid var(--bd0);
+  border-left: 1px solid var(--bd0); text-align: center; min-width: 80px;
+}
+.cmp-cell.cmp-winner { background: rgba(79,110,247,0.08); }
+.cmp-cell-value {
+  font-size: 13px; font-weight: 700; font-family: var(--mono); margin-bottom: 3px;
+}
+.cmp-cell-bar-track {
+  height: 3px; background: var(--bg3); border-radius: 99px; overflow: hidden;
+}
+.cmp-cell-bar {
+  height: 100%; border-radius: 99px;
+  transition: width 0.4s cubic-bezier(0.4,0,0.2,1);
+}
+.cmp-summary-grid { display: flex; flex-direction: column; gap: 8px; }
