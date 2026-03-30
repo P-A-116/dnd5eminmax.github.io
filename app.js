@@ -1346,6 +1346,239 @@ function renderResults() {
   });
 }
 
+// --- Analysis tab ---
+function renderAnalysis() {
+  const container = document.getElementById("tab-analysis");
+  if (!container) return;
+  try {
+    const assumptions = state.optimizer.assumptions;
+    const objective = state.optimizer.objective;
+    const snapshot = {
+      class: state.class,
+      level: Number(state.level),
+      abilities: state.abilities,
+      featPlan: [],
+      spellcasting: state.spellcasting,
+    };
+    const metrics = evaluateBuildSnapshot(snapshot, assumptions, objective);
+    const cls = getClassData(state.class);
+
+    function metricBar(label, value, maxVal, color) {
+      const pct = Math.min(100, (Math.abs(value) / Math.max(maxVal, 0.01)) * 100);
+      const display = typeof value === "number"
+        ? (Number.isInteger(value) ? value : value.toFixed(1))
+        : value;
+      return `<div class="an-metric-row">
+        <div class="an-metric-label">${label}</div>
+        <div class="an-metric-bar-wrap"><div class="an-metric-bar" style="width:${pct.toFixed(1)}%;background:${color}"></div></div>
+        <div class="an-metric-value" style="color:${color}">${display}</div>
+      </div>`;
+    }
+
+    const strengths = [];
+    const weaknesses = [];
+    if (metrics.sustainedDpr >= STRENGTH_THRESHOLD_SUSTAINED_DPR) strengths.push("Strong Sustained Offense");
+    else if (metrics.sustainedDpr < STRENGTH_THRESHOLD_SUSTAINED_DPR * 0.5) weaknesses.push("Low Sustained DPR");
+    if (metrics.burstDprRound1 >= STRENGTH_THRESHOLD_BURST_DPR) strengths.push("Strong Burst Potential");
+    else if (metrics.burstDprRound1 < STRENGTH_THRESHOLD_BURST_DPR * 0.4) weaknesses.push("Weak Burst Damage");
+    if (metrics.effectiveHp >= STRENGTH_THRESHOLD_EFFECTIVE_HP) strengths.push("High Durability");
+    else if (metrics.effectiveHp < STRENGTH_THRESHOLD_EFFECTIVE_HP * 0.55) weaknesses.push("Fragile");
+    if (metrics.controlPressure >= STRENGTH_THRESHOLD_CONTROL) strengths.push("Strong Battlefield Control");
+    else if (!cls.spellcasting) weaknesses.push("No Spell Control");
+    if (metrics.skillScore >= STRENGTH_THRESHOLD_SKILL) strengths.push("Excellent Utility");
+    if (cls.tags?.includes("short_rest")) strengths.push("Short-Rest Efficient");
+    if (cls.hitDie >= 10) strengths.push("High Hit Dice");
+    else if (cls.hitDie <= 6) weaknesses.push("Low Hit Points");
+
+    const progressAssumptions = {
+      ...assumptions,
+      analysisLevel: Math.max(assumptions.analysisLevel, Number(state.level), 8),
+    };
+    const milestones = buildMilestonePlan(state.class, objective, progressAssumptions);
+    const curLvl = Number(state.level);
+
+    const swHtml = strengths.length === 0 && weaknesses.length === 0
+      ? `<div style="color:var(--tx2);font-size:12px;text-align:center;padding:10px 0">No notable strengths or weaknesses identified.</div>`
+      : `${strengths.length > 0 ? `<div class="an-section-label">Strengths</div><div class="result-tags" style="margin-bottom:10px">${strengths.map(s => `<span class="badge good">✓ ${escHtml(s)}</span>`).join("")}</div>` : ""}
+         ${weaknesses.length > 0 ? `<div class="an-section-label">Weaknesses</div><div class="result-tags">${weaknesses.map(w => `<span class="badge warn">⚠ ${escHtml(w)}</span>`).join("")}</div>` : ""}`;
+
+    const milestoneHtml = milestones.length === 0
+      ? `<div style="color:var(--tx2);padding:20px;text-align:center;font-size:12px">No progression data available.</div>`
+      : `<table class="an-milestone-table">
+          <thead><tr>
+            <th>Lvl</th><th>Sust DPR</th><th>Burst R1</th><th>Eff HP</th><th>AC</th><th>Spell DC</th><th>Control</th><th>Score</th>
+          </tr></thead>
+          <tbody>
+            ${milestones.map(m => {
+              const isCur = m.level === curLvl;
+              return `<tr class="${isCur ? "an-milestone-current" : ""}">
+                <td style="font-weight:700;color:${isCur ? "var(--ac1)" : "var(--tx1)"};font-family:var(--mono)">${m.level}</td>
+                <td style="color:var(--ok0);font-family:var(--mono)">${m.metrics.sustainedDpr.toFixed(1)}</td>
+                <td style="color:var(--nova);font-family:var(--mono)">${m.metrics.burstDprRound1.toFixed(1)}</td>
+                <td style="color:var(--tank);font-family:var(--mono)">${Math.round(m.metrics.effectiveHp)}</td>
+                <td style="font-family:var(--mono)">${m.metrics.ac}</td>
+                <td style="color:var(--nova);font-family:var(--mono)">${m.metrics.spellDc}</td>
+                <td style="color:var(--ctrl);font-family:var(--mono)">${m.metrics.controlPressure.toFixed(1)}</td>
+                <td style="color:var(--ac1);font-weight:700;font-family:var(--mono)">${m.metrics.score.toFixed(1)}</td>
+              </tr>`;
+            }).join("")}
+          </tbody>
+        </table>`;
+
+    container.innerHTML = `
+      <div class="panel accent-red" style="margin-bottom:10px">
+        <div class="panel-head">
+          <span class="panel-title">Combat Analysis</span>
+          <span style="font-size:11px;color:var(--tx2)">${escHtml(cls.label)} · Level ${state.level}</span>
+        </div>
+        <div class="panel-body">
+          <div class="an-section-label">Combat Metrics</div>
+          ${metricBar("Sustained DPR",  metrics.sustainedDpr,     40,  "var(--ok0)")}
+          ${metricBar("Burst DPR R1",   metrics.burstDprRound1,   60,  "var(--nova)")}
+          ${metricBar("Effective HP",   metrics.effectiveHp,      200, "var(--tank)")}
+          ${metricBar("Armor Class",    metrics.ac,               25,  "var(--tx0)")}
+          ${metricBar("Spell DC",       metrics.spellDc,          25,  "var(--nova)")}
+          ${metricBar("Control",        metrics.controlPressure,  20,  "var(--ctrl)")}
+          ${metricBar("Skill Score",    metrics.skillScore,       40,  "var(--skl)")}
+          <div class="sep" style="margin:10px 0"></div>
+          <div class="an-score-row">
+            <span style="font-size:11px;color:var(--tx2);text-transform:uppercase;letter-spacing:0.06em">Overall Score</span>
+            <span style="font-size:20px;font-weight:700;color:var(--ac1);font-family:var(--mono)">${metrics.score.toFixed(1)}</span>
+          </div>
+        </div>
+      </div>
+      <div class="panel" style="margin-bottom:10px">
+        <div class="panel-head"><span class="panel-title">Strengths &amp; Weaknesses</span></div>
+        <div class="panel-body">${swHtml}</div>
+      </div>
+      <div class="panel accent-blue">
+        <div class="panel-head">
+          <span class="panel-title">Level Progression</span>
+          <span style="font-size:11px;color:var(--tx2)">Milestone levels</span>
+        </div>
+        <div class="panel-body" style="padding:0;overflow-x:auto">${milestoneHtml}</div>
+      </div>
+    `;
+  } catch (error) {
+    console.error("Error rendering analysis:", error);
+    container.innerHTML = `
+      <div class="panel accent-red">
+        <div class="panel-head"><span class="panel-title">Combat Analysis</span></div>
+        <div class="panel-body" style="text-align:center;padding:40px 0">
+          <div style="color:var(--er0)">Error loading analysis data.</div>
+        </div>
+      </div>
+    `;
+  }
+}
+
+// --- Compare tab ---
+function renderCompare() {
+  const container = document.getElementById("tab-compare");
+  if (!container) return;
+  const results = state.optimizer.results || [];
+  if (results.length === 0) {
+    container.innerHTML = `
+      <div class="panel">
+        <div class="panel-head"><span class="panel-title">Build Comparison</span></div>
+        <div class="panel-body" style="text-align:center;padding:40px 0;color:var(--tx2)">
+          <div style="font-size:32px;margin-bottom:10px">⚖</div>
+          Run the optimizer to generate builds, then compare them side-by-side.
+        </div>
+      </div>
+    `;
+    return;
+  }
+  try {
+    const METRICS = [
+      { key: "score",           label: "Score",      color: "var(--ac1)",  fmt: v => v.toFixed(1) },
+      { key: "sustainedDpr",    label: "Sust DPR",   color: "var(--ok0)",  fmt: v => v.toFixed(1) },
+      { key: "burstDprRound1",  label: "Burst R1",   color: "var(--nova)", fmt: v => v.toFixed(1) },
+      { key: "effectiveHp",     label: "Eff HP",     color: "var(--tank)", fmt: v => Math.round(v) },
+      { key: "ac",              label: "AC",         color: "var(--tx0)",  fmt: v => v },
+      { key: "spellDc",         label: "Spell DC",   color: "var(--nova)", fmt: v => v },
+      { key: "initiative",      label: "Initiative", color: "var(--ac1)",  fmt: v => fmtMod(Math.round(v)) },
+      { key: "controlPressure", label: "Control",    color: "var(--ctrl)", fmt: v => v.toFixed(1) },
+      { key: "skillScore",      label: "Skills",     color: "var(--skl)",  fmt: v => v.toFixed(1) },
+    ];
+
+    const resultMetrics = results.map(r => {
+      const finalStep = r.plan && r.plan.length > 0 ? r.plan[r.plan.length - 1] : null;
+      if (!finalStep || !finalStep.metrics) return { score: r.score };
+      return { ...finalStep.metrics, score: r.score };
+    });
+
+    const rankColors = ["var(--wa0)", "#aaa", "#cd7f32", "var(--tx2)", "var(--tx2)"];
+
+    const headerHtml = `<th class="cmp-metric-head">Metric</th>` +
+      results.map((r, idx) => `<th class="cmp-col-head">
+        <div class="cmp-rank" style="color:${rankColors[idx]}">#${idx + 1}</div>
+        <div class="cmp-class-label">${escHtml(r.classLabel)}</div>
+        ${r.isMulticlass ? `<span class="badge multi" style="margin-top:3px">MC</span>` : ""}
+      </th>`).join("");
+
+    const metricRowsHtml = METRICS.map(m => {
+      const values = resultMetrics.map(rm => rm[m.key] ?? 0);
+      const maxVal = Math.max(...values, 0.01);
+      const maxV   = Math.max(...values);
+      const winnerIdx = values.indexOf(maxV);
+      const cellsHtml = values.map((v, idx) => {
+        const isWinner = idx === winnerIdx;
+        const barPct = (v / maxVal * 100).toFixed(1);
+        return `<td class="cmp-cell${isWinner ? " cmp-winner" : ""}">
+          <div class="cmp-cell-value" style="color:${m.color}">${m.fmt(v)}</div>
+          <div class="cmp-cell-bar-track"><div class="cmp-cell-bar" style="width:${barPct}%;background:${m.color}"></div></div>
+        </td>`;
+      }).join("");
+      return `<tr><td class="cmp-metric-label">${m.label}</td>${cellsHtml}</tr>`;
+    }).join("");
+
+    const summaryHtml = results.map((r, idx) => `
+      <div class="result-card ${idx === 0 ? "rank-1" : ""} ${r.isMulticlass ? "multiclass" : ""}">
+        <div class="result-header">
+          <div>
+            <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px">
+              <span class="result-rank" style="color:${rankColors[idx]}">#${idx + 1}</span>
+              <span class="result-name">${escHtml(r.classLabel)}</span>
+              ${r.isMulticlass ? `<span class="badge multi">Multiclass</span>` : ""}
+            </div>
+            <div class="result-tags">
+              ${r.strengths.map(s => `<span class="badge good">${escHtml(s)}</span>`).join("")}
+              ${r.tradeoffs.map(t => `<span class="badge warn">⚠ ${escHtml(t)}</span>`).join("")}
+            </div>
+          </div>
+          <span class="result-score">${r.score.toFixed(1)}</span>
+        </div>
+      </div>`).join("");
+
+    container.innerHTML = `
+      <div class="panel">
+        <div class="panel-head"><span class="panel-title">Build Comparison</span></div>
+        <div class="panel-body" style="padding:0;overflow-x:auto">
+          <table class="cmp-table">
+            <thead><tr>${headerHtml}</tr></thead>
+            <tbody>${metricRowsHtml}</tbody>
+          </table>
+        </div>
+      </div>
+      <div class="panel" style="margin-top:10px">
+        <div class="panel-head"><span class="panel-title">Build Summaries</span></div>
+        <div class="panel-body"><div class="cmp-summary-grid">${summaryHtml}</div></div>
+      </div>
+    `;
+  } catch (error) {
+    console.error("Error rendering compare:", error);
+    container.innerHTML = `
+      <div class="panel">
+        <div class="panel-head"><span class="panel-title">Build Comparison</span></div>
+        <div class="panel-body" style="text-align:center;padding:40px 0;color:var(--er0)">
+          Error loading comparison data.
+        </div>
+      </div>
+    `;
+  }
+}
+
 // --- Level timeline ---
 const _TIMELINE_MILESTONES = {1:'Base',3:'Subclass',4:'ASI',5:'Xtra Atk',8:'ASI',10:'Feature',12:'ASI',19:'ASI',20:'Capstone'};
 
@@ -1518,6 +1751,8 @@ function render() {
   renderOptimizer();
   renderMetrics();
   renderResults();
+  renderAnalysis();
+  renderCompare();
 }
 
 // =========================================================
@@ -1773,7 +2008,7 @@ function wireEvents() {
         setStatus("Optimization cancelled.");
       } else {
         state.optimizer.results = sorted.slice(0, 5);
-        renderResults(); scheduleMetricsUpdate(); scheduleSave();
+        renderResults(); renderAnalysis(); renderCompare(); scheduleMetricsUpdate(); scheduleSave();
         if (progressBar) progressBar.style.width = "100%";
         setStatus(`Top ${state.optimizer.results.length} builds generated.`);
       }
