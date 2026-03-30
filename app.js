@@ -54,6 +54,9 @@ const MILESTONE_LEVELS = [1, 3, 5, 8, 11, 17, 20];
 // Sentinel used when a class never gains Extra Attack (ensures the condition is never true)
 const EXTRA_ATTACK_NEVER = 99;
 
+// DPR bar visualization scale (DPR value that maps to 100% bar width)
+const DPR_BAR_MAX = 50;
+
 // =========================================================
 // 1. Data / Constants
 // =========================================================
@@ -1040,22 +1043,23 @@ function renderIdentity() {
 function renderAbilities() {
   const pb = proficiencyBonus(state.level);
   const cls = getClassData(state.class);
-  const tbody = document.getElementById("ability-tbody");
-  if (!tbody) return;
-  tbody.innerHTML = "";
+  const grid = document.getElementById("ability-grid");
+  if (!grid) return;
+  grid.innerHTML = "";
   ABILITIES.forEach(ab => {
     const score = state.abilities[ab];
     const mod = modFromScore(score);
     const saveProf = cls.saveProficiencies.includes(ab);
     const saveMod = mod + (saveProf ? pb : 0);
-    const tr = document.createElement("tr");
-    tr.innerHTML = `
-      <td>${ABILITY_LABELS[ab]}</td>
-      <td><input type="number" min="${state.abilityMode === 'pointbuy' ? POINT_BUY_MIN_SCORE : ABILITY_SCORE_MIN}" max="${state.abilityMode === 'pointbuy' ? POINT_BUY_MAX_SCORE : ABILITY_SCORE_MAX}" value="${score}" data-ab="${ab}"></td>
-      <td class="mod-cell">${fmtMod(mod)}</td>
-      <td class="save-cell ${saveProf ? "save-prof" : ""}">${fmtMod(saveMod)}${saveProf ? " ●" : ""}</td>
+    const block = document.createElement("div");
+    block.className = "ability-block";
+    block.innerHTML = `
+      <span class="ability-key">${ab.toUpperCase()}</span>
+      <input class="ability-score" type="number" min="${state.abilityMode === 'pointbuy' ? POINT_BUY_MIN_SCORE : ABILITY_SCORE_MIN}" max="${state.abilityMode === 'pointbuy' ? POINT_BUY_MAX_SCORE : ABILITY_SCORE_MAX}" value="${score}" data-ab="${ab}">
+      <span class="ability-mod">${fmtMod(mod)}</span>
+      <span class="ability-save ${saveProf ? 'prof' : ''}">${saveProf ? '●' : '○'} ${fmtMod(saveMod)}</span>
     `;
-    tbody.appendChild(tr);
+    grid.appendChild(block);
   });
 
   // Point buy info
@@ -1068,8 +1072,10 @@ function renderAbilities() {
       ? `Over budget — Points: ${spent} / ${POINT_BUY_MAX_POINTS} (${Math.abs(rem)} over limit)`
       : `Points: ${spent} / ${POINT_BUY_MAX_POINTS}  (${rem} remaining)`;
     pbInfo.className = overBudget ? "pb-info over" : "pb-info";
+    pbInfo.style.display = "block";
   } else {
-    pbInfo.className = "pb-info hidden";
+    pbInfo.className = "pb-info";
+    pbInfo.style.display = "none";
   }
 }
 
@@ -1085,16 +1091,19 @@ function renderDerived() {
   const spellAtk = pb + mods[getCasterAbility(state)];
   const pp = BASE_AC + mods.wis; // Passive Perception
 
-  const grid = document.getElementById("derived-stats");
-  if (!grid) return;
-  const items = [
-    ["HP", hp],
-    ["AC", ac],
-    ["Prof", fmtMod(pb)],
-    ["PP", pp],
+  const row = document.getElementById("derived-row");
+  if (!row) return;
+  const chips = [
+    ["HP",    hp,             "var(--ok0)"],
+    ["AC",    ac,             "var(--tank)"],
+    ["Prof",  fmtMod(pb),     "var(--ac1)"],
+    ["Init",  fmtMod(mods.dex), "var(--ac1)"],
+    ["PP",    pp,             "var(--tx1)"],
+    ["SpAtk", fmtMod(spellAtk), "var(--nova)"],
+    ["SpDC",  spellDc,        "var(--nova)"],
   ];
-  grid.innerHTML = items.map(([lbl, val]) =>
-    `<div class="derived-chip"><div class="dval">${val}</div><div class="dlbl">${lbl}</div></div>`
+  row.innerHTML = chips.map(([lbl, val, color]) =>
+    `<div class="stat-chip"><span class="sv" style="color:${color}">${val}</span><span class="sl">${lbl}</span></div>`
   ).join("");
 
   // Update status bar
@@ -1236,18 +1245,33 @@ function renderMetrics() {
     const grid = document.getElementById("metrics-grid");
     if (!grid) return;
     const items = [
-      ["Sust DPR",       fmtFixed(metrics.sustainedDpr)],
-      ["Burst DPR (Rd 1)", fmtFixed(metrics.burstDprRound1)],
-      ["Eff HP",         Math.round(metrics.effectiveHp)],
-      ["AC",             metrics.ac],
-      ["Spell DC",       metrics.spellDc],
-      ["Control",        fmtFixed(metrics.controlPressure)],
-      ["Skills",         fmtFixed(metrics.skillScore)],
-      ["Score",          fmtFixed(metrics.score)],
+      ["Sust DPR",       fmtFixed(metrics.sustainedDpr),   "var(--ok0)"],
+      ["Burst DPR R1",   fmtFixed(metrics.burstDprRound1), "var(--nova)"],
+      ["Eff HP",         Math.round(metrics.effectiveHp),  "var(--tank)"],
+      ["AC",             metrics.ac,                        "var(--tx0)"],
+      ["Spell DC",       metrics.spellDc,                  "var(--nova)"],
+      ["Control",        fmtFixed(metrics.controlPressure),"var(--ctrl)"],
+      ["Skills",         fmtFixed(metrics.skillScore),     "var(--skl)"],
+      ["Score",          fmtFixed(metrics.score),          "var(--ac1)"],
     ];
-    grid.innerHTML = items.map(([lbl, val]) =>
-      `<div class="metric-chip"><div class="mval">${val}</div><div class="mlbl">${lbl}</div></div>`
+    grid.innerHTML = items.map(([lbl, val, color]) =>
+      `<div class="metric-cell"><div class="mv" style="color:${color}">${val}</div><div class="ml">${lbl}</div></div>`
     ).join("");
+
+    // Update DPR bars
+    const susW   = Math.min(100, (metrics.sustainedDpr / DPR_BAR_MAX) * 100);
+    const burstW = Math.min(100, ((metrics.burstDprRound1 - metrics.sustainedDpr) / DPR_BAR_MAX) * 100);
+    const susBar   = document.getElementById("dpr-sus-bar");
+    const burstBar = document.getElementById("dpr-burst-bar");
+    const susVal   = document.getElementById("d-sus-val");
+    const burstVal = document.getElementById("d-burst-val");
+    if (susBar)   susBar.style.width  = susW + "%";
+    if (burstBar) { burstBar.style.left = susW + "%"; burstBar.style.width = Math.max(0, burstW) + "%"; }
+    if (susVal)   susVal.textContent   = fmtFixed(metrics.sustainedDpr);
+    if (burstVal) burstVal.textContent = fmtFixed(metrics.burstDprRound1);
+
+    // Render radar chart
+    renderRadar(metrics);
   } catch (error) {
     console.error("Error rendering metrics:", error);
     setStatus("⚠ Error calculating metrics", true);
@@ -1271,37 +1295,220 @@ function renderResults() {
     const card = document.createElement("div");
     card.className = "result-card" + (idx === 0 ? " rank-1" : "") + (r.isMulticlass ? " multiclass" : "");
     const s = r.summary;
+    const rankColors = ["var(--wa0)", "#aaa", "#cd7f32", "var(--tx2)", "var(--tx2)"];
     const multiclassBadge = r.isMulticlass
-      ? `<span class="tag multiclass-badge">Multiclass</span>`
+      ? `<span class="badge multi">Multiclass</span>`
       : "";
+    const susW   = Math.min(100, (s.sustainedDpr / DPR_BAR_MAX) * 100);
+    const burstW = Math.min(100, ((s.burstDprRound1 - s.sustainedDpr) / DPR_BAR_MAX) * 100);
     card.innerHTML = `
       <div class="result-header">
-        <span class="result-name">#${idx+1} ${escHtml(r.classLabel)}</span>
-        <span class="result-score">Score: ${fmtFixed(r.score)}</span>
+        <div>
+          <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px">
+            <span class="result-rank" style="color:${rankColors[idx] || 'var(--tx2)'}">#${idx+1}</span>
+            <span class="result-name">${escHtml(r.classLabel)}</span>
+            ${multiclassBadge}
+          </div>
+          <div class="result-tags">
+            ${r.strengths.map(t => `<span class="badge good">${escHtml(t)}</span>`).join("")}
+            ${r.tradeoffs.map(t => `<span class="badge warn">⚠ ${escHtml(t)}</span>`).join("")}
+          </div>
+        </div>
+        <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px">
+          <span class="result-score">${fmtFixed(r.score)}</span>
+          <button class="result-apply-btn" data-apply-idx="${idx}">Apply</button>
+        </div>
+      </div>
+      <div class="dpr-bar-wrap">
+        <div class="dpr-bar-labels">
+          <span></span>
+          <span>
+            <span style="color:var(--ok0);font-family:var(--mono)">${fmtFixed(s.sustainedDpr)}</span>
+            <span style="color:var(--tx2)"> sus </span>
+            <span style="color:var(--nova);font-family:var(--mono)">${fmtFixed(s.burstDprRound1)}</span>
+            <span style="color:var(--tx2)"> burst</span>
+          </span>
+        </div>
+        <div class="dpr-bar-track">
+          <div class="dpr-bar-sus" style="width:${susW}%"></div>
+          <div class="dpr-bar-burst" style="left:${susW}%;width:${Math.max(0,burstW)}%"></div>
+        </div>
       </div>
       <div class="result-stats">
-        <span>DPR: ${fmtFixed(s.sustainedDpr)}</span>
-        <span>Burst: ${fmtFixed(s.burstDprRound1)}</span>
-        <span>eHP: ${Math.round(s.effectiveHp)}</span>
-        <span>AC: ${s.ac}</span>
-        <span>SpDC: ${s.spellDc}</span>
-        <span>Init: ${fmtMod(s.initiative)}</span>
-        <span>Pri: ${s.primaryStat?.toUpperCase()}</span>
+        <span>EHP: <span style="color:var(--tank);font-family:var(--mono)">${Math.round(s.effectiveHp)}</span></span>
+        <span>AC: <span style="color:var(--tx0);font-family:var(--mono)">${s.ac}</span></span>
+        <span>SpDC: <span style="color:var(--nova);font-family:var(--mono)">${s.spellDc}</span></span>
+        <span>Init: <span style="color:var(--ac1);font-family:var(--mono)">${fmtMod(s.initiative)}</span></span>
+        <span>Pri: <span style="color:var(--tx1);font-family:var(--mono)">${s.primaryStat?.toUpperCase()}</span></span>
       </div>
-      <div class="result-tags">
-        ${multiclassBadge}
-        ${r.strengths.map(t => `<span class="tag good">${escHtml(t)}</span>`).join("")}
-        ${r.tradeoffs.map(t => `<span class="tag warn">⚠ ${escHtml(t)}</span>`).join("")}
-      </div>
-      <button class="result-apply-btn" data-apply-idx="${idx}">Apply to Builder</button>
     `;
     list.appendChild(card);
   });
 }
 
+// --- Level timeline ---
+const _TIMELINE_MILESTONES = {1:'Base',3:'Subclass',4:'ASI',5:'Xtra Atk',8:'ASI',10:'Feature',12:'ASI',19:'ASI',20:'Capstone'};
+
+function renderTimeline() {
+  const wrap = document.getElementById("level-timeline");
+  if (!wrap) return;
+  wrap.innerHTML = "";
+  for (let lv = 1; lv <= 20; lv++) {
+    const isCur  = lv === state.level;
+    const isPast = lv < state.level;
+    const ms = _TIMELINE_MILESTONES[lv];
+    const sz = isCur ? "large" : ms ? "medium" : "small";
+    const dot = document.createElement("div");
+    dot.className = "lv-dot";
+    dot.addEventListener("click", () => {
+      state.level = lv;
+      const levelInput = document.getElementById("f-level");
+      if (levelInput) levelInput.value = lv;
+      renderTimeline();
+      renderAbilities(); renderDerived(); renderSkills(); renderWeapons(); scheduleMetricsUpdate();
+      scheduleSave();
+    });
+    const pip = document.createElement("div");
+    pip.className = `lv-pip ${sz} ${isCur ? "current" : isPast ? "past" : ""}`;
+    pip.textContent = lv;
+    dot.appendChild(pip);
+    if (ms || isCur) {
+      const lbl = document.createElement("div");
+      lbl.className = `lv-label ${isCur ? "current" : ""}`;
+      lbl.textContent = isCur ? `Lv ${lv}` : ms;
+      dot.appendChild(lbl);
+    }
+    wrap.appendChild(dot);
+  }
+  const pbEl = document.getElementById("d-pb");
+  if (pbEl) pbEl.textContent = fmtMod(proficiencyBonus(state.level));
+  const lvLbl = document.getElementById("d-level-label");
+  if (lvLbl) lvLbl.textContent = state.level;
+}
+
+// --- Radar chart ---
+function renderRadar(metrics) {
+  const svg = document.getElementById("radar-svg");
+  if (!svg) return;
+  const keys   = ["sustainedDpr", "burstDprRound1", "effectiveHp", "controlPressure", "skillScore", "initiative"];
+  const labels = ["Sustained",    "Burst",           "Tank",         "Control",          "Skill",      "Init"];
+  const colors = ["var(--ok0)",   "var(--nova)",     "var(--tank)", "var(--ctrl)",      "var(--skl)", "var(--ac1)"];
+  const maxV   = {sustainedDpr:40, burstDprRound1:60, effectiveHp:150, controlPressure:20, skillScore:30, initiative:10};
+  const cx = 110, cy = 110, r = 75;
+  const step = (Math.PI * 2) / keys.length;
+  const pts = keys.map((k, i) => {
+    const a = i * step - Math.PI / 2;
+    const raw = metrics[k] || 0;
+    const frac = Math.min(1, Math.abs(raw) / (maxV[k] || 1));
+    return {
+      x: cx + Math.cos(a) * r * frac, y: cy + Math.sin(a) * r * frac,
+      lx: cx + Math.cos(a) * (r + 22), ly: cy + Math.sin(a) * (r + 22),
+      c: colors[i], label: labels[i],
+    };
+  });
+  const poly = pts.map(p => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" ");
+  let html = "";
+  [0.25, 0.5, 0.75, 1].forEach(f => {
+    html += `<circle cx="${cx}" cy="${cy}" r="${r*f}" fill="none" stroke="var(--bd0)" stroke-width="0.5"/>`;
+  });
+  for (let i = 0; i < 6; i++) {
+    const a = i * step - Math.PI / 2;
+    html += `<line x1="${cx}" y1="${cy}" x2="${(cx+Math.cos(a)*r).toFixed(1)}" y2="${(cy+Math.sin(a)*r).toFixed(1)}" stroke="var(--bd0)" stroke-width="0.5"/>`;
+  }
+  html += `<polygon points="${poly}" fill="rgba(79,110,247,0.2)" stroke="var(--ac0)" stroke-width="1.5"/>`;
+  pts.forEach((p, i) => {
+    html += `<circle cx="${p.x.toFixed(1)}" cy="${p.y.toFixed(1)}" r="3" fill="${p.c}" stroke="var(--bg2)" stroke-width="1"/>`;
+  });
+  pts.forEach((p) => {
+    const anchor = p.lx < cx - 10 ? "end" : p.lx > cx + 10 ? "start" : "middle";
+    html += `<text x="${p.lx.toFixed(1)}" y="${(p.ly+4).toFixed(1)}" text-anchor="${anchor}" font-size="8" fill="var(--tx2)" font-family="var(--sans)">${p.label}</text>`;
+  });
+  svg.innerHTML = html;
+}
+
+// --- Tab switching ---
+function switchTab(id) {
+  ["builder", "analysis", "compare"].forEach(t => {
+    const el = document.getElementById(`tab-${t}`);
+    if (el) el.classList.toggle("hidden", t !== id);
+  });
+  document.querySelectorAll(".nav-tab").forEach(btn => {
+    btn.classList.toggle("active", btn.dataset.tab === id);
+  });
+}
+
+// --- Command Palette ---
+const CMD_ACTIONS = [
+  { id: "optimize", icon: "⚡", label: "Run optimizer",        key: "⌘↵" },
+  { id: "apply",    icon: "✔",  label: "Apply top build",       key: "⌘⇧A" },
+  { id: "export",   icon: "⬇",  label: "Export JSON",           key: "⌘E" },
+  { id: "reset",    icon: "↺",  label: "Reset character",       key: "⌘⇧R" },
+  { id: "std",      icon: "🎲", label: "Apply standard array",  key: "" },
+  { id: "autopb",   icon: "📊", label: "Auto point buy",        key: "" },
+  { id: "builder",  icon: "⚔",  label: "Go to Builder tab",     key: "⌘1" },
+  { id: "analysis", icon: "📊", label: "Go to Analysis tab",    key: "⌘2" },
+  { id: "compare",  icon: "⚖",  label: "Go to Compare tab",     key: "⌘3" },
+];
+let _cmdSel = 0, _cmdFiltered = [...CMD_ACTIONS];
+
+function openCmdPalette() {
+  const overlay = document.getElementById("cmd-overlay");
+  const input   = document.getElementById("cmd-input");
+  if (!overlay || !input) return;
+  overlay.classList.add("open");
+  input.value = "";
+  _cmdFiltered = [...CMD_ACTIONS]; _cmdSel = 0;
+  renderCmdList();
+  input.focus();
+}
+
+function closeCmdPalette(e) {
+  if (!e || e.target === document.getElementById("cmd-overlay")) {
+    const overlay = document.getElementById("cmd-overlay");
+    if (overlay) overlay.classList.remove("open");
+  }
+}
+
+function filterCmdList() {
+  const q = (document.getElementById("cmd-input")?.value || "").toLowerCase();
+  _cmdFiltered = CMD_ACTIONS.filter(c => c.label.toLowerCase().includes(q));
+  _cmdSel = 0; renderCmdList();
+}
+
+function renderCmdList() {
+  const listEl = document.getElementById("cmd-list");
+  if (!listEl) return;
+  listEl.innerHTML = _cmdFiltered.map((c, i) =>
+    `<div class="cmd-item${i === _cmdSel ? " selected" : ""}" data-cmd="${c.id}">
+      <span class="cmd-icon">${c.icon}</span>
+      <span class="cmd-label">${c.label}</span>
+      <span class="cmd-key">${c.key}</span>
+    </div>`
+  ).join("") || `<div style="padding:14px;text-align:center;color:var(--tx2);font-size:13px">No commands found</div>`;
+}
+
+function cmdKeyNav(e) {
+  if (e.key === "Escape") { closeCmdPalette(); return; }
+  if (e.key === "ArrowDown") { _cmdSel = Math.min(_cmdSel + 1, _cmdFiltered.length - 1); renderCmdList(); }
+  if (e.key === "ArrowUp")   { _cmdSel = Math.max(_cmdSel - 1, 0); renderCmdList(); }
+  if (e.key === "Enter" && _cmdFiltered[_cmdSel]) { execCmd(_cmdFiltered[_cmdSel].id); }
+}
+
+function execCmd(id) {
+  closeCmdPalette();
+  if (id === "optimize") { document.getElementById("btn-optimize")?.click(); }
+  else if (id === "apply")    { document.getElementById("btn-apply-top")?.click(); }
+  else if (id === "export")   { document.getElementById("btn-export")?.click(); }
+  else if (id === "reset")    { document.getElementById("btn-reset")?.click(); }
+  else if (id === "std")      { document.getElementById("btn-std-array")?.click(); }
+  else if (id === "autopb")   { document.getElementById("btn-auto-pb")?.click(); }
+  else if (id === "builder" || id === "analysis" || id === "compare") { switchTab(id); }
+}
+
 // --- Full render ---
 function render() {
   renderIdentity();
+  renderTimeline();
   renderAbilities();
   renderDerived();
   renderSkills();
@@ -1324,7 +1531,7 @@ function wireEvents() {
   document.getElementById("f-level").addEventListener("change", e => {
     state.level = validateLevel(e.target.value);
     e.target.value = state.level; // Update display with validated value
-    renderAbilities(); renderDerived(); renderSkills(); renderWeapons(); scheduleMetricsUpdate();
+    renderTimeline(); renderAbilities(); renderDerived(); renderSkills(); renderWeapons(); scheduleMetricsUpdate();
     scheduleSave();
   });
   document.getElementById("f-class").addEventListener("change", e => {
@@ -1346,7 +1553,7 @@ function wireEvents() {
   });
 
   // Ability table - delegate
-  document.getElementById("ability-tbody").addEventListener("change", e => {
+  document.getElementById("ability-grid").addEventListener("change", e => {
     const ab = e.target.dataset.ab;
     if (!ab) return;
     state.abilities[ab] = validateAbilityScore(e.target.value, state.abilityMode);
@@ -1517,14 +1724,14 @@ function wireEvents() {
     const btnOptimize = document.getElementById("btn-optimize");
     const btnCancel   = document.getElementById("btn-cancel");
     const btnApplyTop = document.getElementById("btn-apply-top");
-    const progressWrap = document.getElementById("optimizer-progress");
-    const progressBar  = document.getElementById("optimizer-progress-bar");
+    const progressWrap = document.getElementById("progress-bar-wrap");
+    const progressBar  = document.getElementById("progress-bar");
 
     // Disable optimize / apply; show cancel + progress bar
     btnOptimize.disabled = true;
     btnApplyTop.disabled = true;
     btnCancel.classList.remove("hidden");
-    if (progressWrap) progressWrap.classList.remove("hidden");
+    if (progressWrap) progressWrap.style.display = "block";
     if (progressBar)  progressBar.style.width = "0%";
 
     const { objective, assumptions } = state.optimizer;
@@ -1577,7 +1784,7 @@ function wireEvents() {
       btnOptimize.disabled = false;
       btnApplyTop.disabled = false;
       btnCancel.classList.add("hidden");
-      if (progressWrap) progressWrap.classList.add("hidden");
+      if (progressWrap) progressWrap.style.display = "none";
       if (progressBar)  progressBar.style.width = "0%";
       _currentCancelToken = null;
     }
@@ -1655,6 +1862,34 @@ function wireEvents() {
     const btn = e.target.closest("[data-apply-idx]");
     if (!btn) return;
     applyBuildResult(Number(btn.dataset.applyIdx));
+  });
+
+  // Tab switching
+  document.querySelectorAll(".nav-tab").forEach(btn => {
+    btn.addEventListener("click", () => switchTab(btn.dataset.tab));
+  });
+
+  // Command palette
+  const cmdOverlay = document.getElementById("cmd-overlay");
+  const cmdInput   = document.getElementById("cmd-input");
+  const cmdList    = document.getElementById("cmd-list");
+  const btnCmd     = document.getElementById("btn-cmd");
+  if (btnCmd)     btnCmd.addEventListener("click", openCmdPalette);
+  if (cmdOverlay) cmdOverlay.addEventListener("click", closeCmdPalette);
+  if (cmdInput)   cmdInput.addEventListener("input", filterCmdList);
+  if (cmdInput)   cmdInput.addEventListener("keydown", cmdKeyNav);
+  if (cmdList)    cmdList.addEventListener("click", e => {
+    const item = e.target.closest("[data-cmd]");
+    if (item) execCmd(item.dataset.cmd);
+  });
+
+  // Global keyboard shortcuts
+  document.addEventListener("keydown", e => {
+    if ((e.metaKey || e.ctrlKey) && e.key === "k") { e.preventDefault(); openCmdPalette(); }
+    if ((e.metaKey || e.ctrlKey) && e.key === "Enter") { e.preventDefault(); document.getElementById("btn-optimize")?.click(); }
+    if ((e.metaKey || e.ctrlKey) && e.key === "1") { e.preventDefault(); switchTab("builder"); }
+    if ((e.metaKey || e.ctrlKey) && e.key === "2") { e.preventDefault(); switchTab("analysis"); }
+    if ((e.metaKey || e.ctrlKey) && e.key === "3") { e.preventDefault(); switchTab("compare"); }
   });
 }
 
