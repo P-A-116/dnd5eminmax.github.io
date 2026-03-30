@@ -249,16 +249,3 @@ export function alertInitiativeBonus(featPlan) {
   return (featPlan || []).includes("alert") ? ALERT_INITIATIVE_BONUS : 0;
 }
 
-// =========================================================
-// Browser global – attach to globalThis.DndDamageModel
-// =========================================================
-if (typeof globalThis !== "undefined") {
-  globalThis.DndDamageModel = {
-    atLeastOneHitChance,
-    warlockBeamCount,
-    sneakAttackAvg,
-    computeSustainedDpr,
-    computeBurstDprRound1,
-    alertInitiativeBonus,
-  };
-}
