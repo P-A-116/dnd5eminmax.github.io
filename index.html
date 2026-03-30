@@ -3,23 +3,42 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>D&amp;D 5e Min/Max Builder</title>
+  <title>D&amp;D 5e SRD Builder</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Syne:wght@700;800&family=JetBrains+Mono:wght@400;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="./styles.css">
 </head>
 <body>
   <a href="#main-content" class="skip-link">Skip to main content</a>
 
+  <!-- Command Palette -->
+  <div id="cmd-overlay">
+    <div id="cmd-box">
+      <input id="cmd-input" placeholder="Type a command…" autocomplete="off">
+      <div id="cmd-list"></div>
+    </div>
+  </div>
+
   <!-- Toolbar -->
   <header id="toolbar">
-    <span id="app-title">D&amp;D 5e SRD Builder</span>
-    <div id="toolbar-btns">
-      <button id="btn-optimize" title="Generate optimal builds" aria-label="Optimize: generate optimal builds">⚡ Optimize</button>
-      <button id="btn-cancel" title="Cancel optimization" aria-label="Cancel optimization" class="hidden">✕ Cancel</button>
-      <button id="btn-apply-top" title="Apply top result to builder" aria-label="Apply top result to builder">✔ Apply Top</button>
-      <button id="btn-export" title="Export JSON" aria-label="Export character as JSON">⬇ Export</button>
-      <button id="btn-reset" title="Reset all" aria-label="Reset all fields">↺ Reset</button>
-    </div>
+    <span id="app-logo">D&amp;D 5e SRD</span>
+
+    <button class="nav-tab active" data-tab="builder">⚔ Builder</button>
+    <button class="nav-tab" data-tab="analysis">📊 Analysis</button>
+    <button class="nav-tab" data-tab="compare">⚖ Compare</button>
+
+    <div class="spacer"></div>
+
+    <button class="cmd-hint" id="btn-cmd" title="Open command palette (⌘K)" aria-label="Open command palette">⌘K</button>
+    <button id="btn-optimize" class="btn primary" title="Generate optimal builds" aria-label="Optimize: generate optimal builds">⚡ Optimize</button>
+    <button id="btn-cancel" class="btn danger hidden" title="Cancel optimization" aria-label="Cancel optimization">✕ Cancel</button>
+    <button id="btn-apply-top" class="btn" title="Apply top result to builder" aria-label="Apply top result to builder">✔ Apply Top</button>
+    <button id="btn-export" class="btn" title="Export JSON" aria-label="Export character as JSON">⬇ Export</button>
+    <button id="btn-reset" class="btn" title="Reset all" aria-label="Reset all fields">↺ Reset</button>
   </header>
+
+  <!-- Progress bar -->
+  <div id="progress-bar-wrap"><div id="progress-bar"></div></div>
 
   <!-- Status bar -->
   <div id="statusbar" role="region" aria-label="Status">
@@ -29,161 +48,242 @@
     <span id="status-init"></span>
   </div>
 
-  <!-- Optimizer progress bar (hidden until optimizing) -->
-  <div id="optimizer-progress" class="hidden" role="progressbar" aria-label="Optimization progress">
-    <div id="optimizer-progress-bar"></div>
-  </div>
-
-  <!-- Validation diagnostics panel (hidden until there are issues) -->
+  <!-- Validation diagnostics panel -->
   <div id="validation-panel" class="hidden" role="status" aria-live="polite" aria-label="Validation diagnostics"></div>
 
-  <!-- Main two-column layout -->
+  <!-- Main layout -->
   <main id="main-content">
   <div id="layout">
 
-    <!-- LEFT: Builder -->
-    <div id="col-builder">
+    <!-- LEFT COLUMN -->
+    <div id="col-left">
 
-      <!-- Identity row -->
-      <section class="panel" id="sec-identity">
-        <div class="panel-head">Identity</div>
-        <div class="identity-grid">
-          <label>Name<input id="f-name" type="text" autocomplete="off"></label>
-          <label>Player<input id="f-player" type="text" autocomplete="off"></label>
-          <label>Subclass<input id="f-subclass" type="text" autocomplete="off"></label>
-          <label>Class<select id="f-class"></select></label>
-          <label>Level<input id="f-level" type="number" min="1" max="20" value="1"></label>
-          <label>Race<select id="f-race"></select></label>
-          <label>Background<select id="f-background"></select></label>
-          <label>Alignment<select id="f-alignment"></select></label>
+      <!-- Builder tab -->
+      <div id="tab-builder">
+
+        <!-- Identity -->
+        <div class="panel">
+          <div class="panel-head">
+            <span class="panel-title">Identity</span>
+          </div>
+          <div class="panel-body">
+            <div class="identity-grid">
+              <div class="field-label"><span>Name</span><input id="f-name" type="text" autocomplete="off"></div>
+              <div class="field-label"><span>Player</span><input id="f-player" type="text" autocomplete="off"></div>
+              <div class="field-label"><span>Subclass</span><input id="f-subclass" type="text" autocomplete="off"></div>
+              <div class="field-label"><span>Class</span><select id="f-class"></select></div>
+              <div class="field-label"><span>Level</span><input id="f-level" type="number" min="1" max="20" value="1"></div>
+              <div class="field-label"><span>Race</span><select id="f-race"></select></div>
+              <div class="field-label"><span>Background</span><select id="f-background"></select></div>
+              <div class="field-label"><span>Alignment</span><select id="f-alignment"></select></div>
+            </div>
+          </div>
         </div>
-      </section>
 
-      <!-- Abilities section -->
-      <section class="panel" id="sec-abilities">
-        <div class="panel-head">
-          Ability Scores
-          <span class="panel-head-right">
-            <select id="f-ability-mode" aria-label="Ability score input mode">
-              <option value="standard">Standard Array</option>
-              <option value="pointbuy">Point Buy</option>
-              <option value="manual">Manual</option>
-            </select>
-            <button id="btn-std-array" title="Apply default standard array" aria-label="Apply standard array">Apply SA</button>
-            <button id="btn-auto-pb" title="Auto-assign point buy for objective" aria-label="Auto-assign point buy for current objective">Auto PB</button>
-          </span>
+        <!-- Level Timeline -->
+        <div class="panel accent-blue">
+          <div class="panel-head">
+            <span class="panel-title">Level Progression</span>
+            <span style="font-size:11px;color:var(--tx2)">Prof Bonus: <span id="d-pb" style="color:var(--ac1);font-family:var(--mono)">+2</span></span>
+          </div>
+          <div class="panel-body">
+            <div id="level-timeline"></div>
+            <div class="sep" style="margin-top:10px"></div>
+            <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--tx2)">
+              <span>Level <span id="d-level-label" style="color:var(--ac1);font-weight:700">1</span></span>
+              <span>Click a pip to change level</span>
+            </div>
+          </div>
         </div>
-        <div id="pb-info" class="pb-info hidden"></div>
-        <table id="ability-table">
-          <thead><tr><th>Ability</th><th>Score</th><th>Mod</th><th>Save</th></tr></thead>
-          <tbody id="ability-tbody"></tbody>
-        </table>
-      </section>
 
-      <!-- Derived stats bar -->
-      <section class="panel" id="sec-derived">
-        <div class="panel-head">Derived Stats</div>
-        <div id="derived-stats" class="derived-row"></div>
-      </section>
-
-      <!-- Skills section -->
-      <section class="panel" id="sec-skills">
-        <div class="panel-head">Skills
-          <span class="panel-head-right"><button id="btn-clear-skills" title="Clear all proficiencies" aria-label="Clear all skill proficiencies">Clear</button></span>
+        <!-- Ability Scores -->
+        <div class="panel">
+          <div class="panel-head">
+            <span class="panel-title">Ability Scores</span>
+            <div style="display:flex;gap:6px;align-items:center">
+              <select id="f-ability-mode" style="font-size:11px;padding:3px 6px" aria-label="Ability score input mode">
+                <option value="standard">Standard Array</option>
+                <option value="pointbuy">Point Buy</option>
+                <option value="manual">Manual</option>
+              </select>
+              <button class="btn sm" id="btn-std-array" title="Apply default standard array" aria-label="Apply standard array">Apply SA</button>
+              <button class="btn sm" id="btn-auto-pb" title="Auto-assign point buy for objective" aria-label="Auto-assign point buy for current objective">Auto PB</button>
+            </div>
+          </div>
+          <div class="panel-body">
+            <div id="ability-grid"></div>
+            <div id="pb-info" class="pb-info"></div>
+          </div>
         </div>
-        <table id="skills-table">
-          <thead><tr><th>Skill</th><th>Ability</th><th>Bonus</th><th>Prof</th><th>Exp</th></tr></thead>
-          <tbody id="skills-tbody"></tbody>
-        </table>
-      </section>
 
-      <!-- Weapons section -->
-      <section class="panel" id="sec-weapons">
-        <div class="panel-head">Weapons
-          <span class="panel-head-right"><button id="btn-add-weapon" aria-label="Add weapon">+ Add</button></span>
+        <!-- Derived Stats + DPR -->
+        <div class="panel">
+          <div class="panel-head"><span class="panel-title">Derived Stats</span></div>
+          <div class="panel-body">
+            <div id="derived-row"></div>
+            <div class="dpr-bar-wrap" style="margin-top:10px">
+              <div class="dpr-bar-labels">
+                <span>DPR Model</span>
+                <span>
+                  <span id="d-sus-val" style="color:var(--ok0);font-family:var(--mono)">—</span>
+                  <span style="color:var(--tx2)"> sustain </span>
+                  <span id="d-burst-val" style="color:var(--nova);font-family:var(--mono)">—</span>
+                  <span style="color:var(--tx2)"> burst R1</span>
+                </span>
+              </div>
+              <div class="dpr-bar-track">
+                <div class="dpr-bar-sus" id="dpr-sus-bar" style="width:0%"></div>
+                <div class="dpr-bar-burst" id="dpr-burst-bar" style="left:0%;width:0%"></div>
+              </div>
+            </div>
+          </div>
         </div>
-        <table id="weapons-table">
-          <thead><tr><th>Name</th><th>Ability</th><th>Dmg</th><th>+Mag</th><th>Prof</th><th>Atk</th><th>Avg</th><th></th></tr></thead>
-          <tbody id="weapons-tbody"></tbody>
-        </table>
-      </section>
 
-      <!-- Spellcasting section -->
-      <section class="panel" id="sec-spells">
-        <div class="panel-head">Spellcasting</div>
-        <div class="spell-row">
-          <label>Casting Ability<select id="f-cast-ability"></select></label>
-          <label>Spell Atk<span id="d-spell-atk" class="derived-val">—</span></label>
-          <label>Save DC<span id="d-spell-dc" class="derived-val">—</span></label>
-          <label><input type="checkbox" id="f-has-shield"> Shield</label>
-          <label>Armor +Mag<input id="f-armor-bonus" type="number" min="0" max="5" value="0" style="width:3rem"></label>
+        <!-- Skills -->
+        <div class="panel">
+          <div class="panel-head">
+            <span class="panel-title">Skills</span>
+            <button class="btn sm" id="btn-clear-skills" title="Clear all proficiencies" aria-label="Clear all skill proficiencies">Clear</button>
+          </div>
+          <div class="panel-body" style="padding:0">
+            <table id="skills-table">
+              <thead><tr><th>Skill</th><th>Ability</th><th>Bonus</th><th>Prof</th><th>Exp</th></tr></thead>
+              <tbody id="skills-tbody"></tbody>
+            </table>
+          </div>
         </div>
-        <div class="panel-head" style="margin-top:0.5rem">Spell Slots</div>
-        <table id="slots-table">
-          <thead><tr id="slots-head-row"></tr></thead>
-          <tbody><tr id="slots-body-row"></tr></tbody>
-        </table>
-        <div class="spell-row" style="margin-top:0.5rem">
-          <label style="flex:1">Known Spells<textarea id="f-known-spells" rows="2" placeholder="comma-separated or notes"></textarea></label>
-          <label style="flex:1">Prepared Spells<textarea id="f-prep-spells" rows="2" placeholder="comma-separated or notes"></textarea></label>
+
+        <!-- Weapons -->
+        <div class="panel">
+          <div class="panel-head">
+            <span class="panel-title">Weapons</span>
+            <button class="btn sm" id="btn-add-weapon" aria-label="Add weapon">+ Add</button>
+          </div>
+          <div class="panel-body" style="padding:0">
+            <table id="weapons-table">
+              <thead><tr><th>Name</th><th>Ability</th><th>Dmg</th><th>+Mag</th><th>Prof</th><th>Atk</th><th>Avg</th><th></th></tr></thead>
+              <tbody id="weapons-tbody"></tbody>
+            </table>
+          </div>
         </div>
-      </section>
 
-      <!-- Notes / traits / features -->
-      <section class="panel" id="sec-notes">
-        <div class="panel-head">Notes &amp; Traits</div>
-        <div class="notes-grid">
-          <label>Features<textarea id="f-features" rows="3"></textarea></label>
-          <label>Traits<textarea id="f-traits" rows="3"></textarea></label>
-          <label>Notes<textarea id="f-notes" rows="3"></textarea></label>
-          <label>Equipment (comma-sep)<textarea id="f-equipment" rows="2"></textarea></label>
+        <!-- Spellcasting -->
+        <div class="panel">
+          <div class="panel-head"><span class="panel-title">Spellcasting</span></div>
+          <div class="panel-body">
+            <div class="spell-row">
+              <div class="field-label" style="min-width:120px"><span>Casting Ability</span><select id="f-cast-ability"></select></div>
+              <div class="field-label"><span>Spell Atk</span><span id="d-spell-atk" class="derived-val">—</span></div>
+              <div class="field-label"><span>Save DC</span><span id="d-spell-dc" class="derived-val">—</span></div>
+              <label class="assump-check" style="margin-top:auto"><input type="checkbox" id="f-has-shield"> Shield</label>
+              <div class="field-label"><span>Armor +Mag</span><input id="f-armor-bonus" type="number" min="0" max="5" value="0" style="width:60px"></div>
+            </div>
+            <div style="font-size:10px;font-weight:700;letter-spacing:0.1em;text-transform:uppercase;color:var(--tx2);margin:10px 0 6px">Spell Slots</div>
+            <table id="slots-table">
+              <thead><tr id="slots-head-row"></tr></thead>
+              <tbody><tr id="slots-body-row"></tr></tbody>
+            </table>
+            <div class="notes-grid" style="margin-top:10px">
+              <label style="display:flex;flex-direction:column;gap:3px;font-size:10px;color:var(--tx2);text-transform:uppercase;letter-spacing:0.06em">Known Spells<textarea id="f-known-spells" rows="2" placeholder="comma-separated or notes"></textarea></label>
+              <label style="display:flex;flex-direction:column;gap:3px;font-size:10px;color:var(--tx2);text-transform:uppercase;letter-spacing:0.06em">Prepared Spells<textarea id="f-prep-spells" rows="2" placeholder="comma-separated or notes"></textarea></label>
+            </div>
+          </div>
         </div>
-      </section>
 
-    </div><!-- /col-builder -->
-
-    <!-- RIGHT: Optimizer + Analysis + Import/Export -->
-    <div id="col-optimizer">
-
-      <!-- Optimizer section -->
-      <section class="panel" id="sec-optimizer">
-        <div class="panel-head">Optimizer</div>
-        <div class="opt-row">
-          <label>Objective<select id="f-objective"></select></label>
-          <label>Rule Preset<select id="f-rule-preset"></select></label>
-          <label>Analysis Lvl<input id="f-analysis-level" type="number" min="1" max="20" value="8" style="width:3.5rem"></label>
+        <!-- Notes & Traits -->
+        <div class="panel">
+          <div class="panel-head"><span class="panel-title">Notes &amp; Traits</span></div>
+          <div class="panel-body">
+            <div class="notes-grid">
+              <label>Features<textarea id="f-features" rows="3"></textarea></label>
+              <label>Traits<textarea id="f-traits" rows="3"></textarea></label>
+              <label>Notes<textarea id="f-notes" rows="3"></textarea></label>
+              <label>Equipment (comma-sep)<textarea id="f-equipment" rows="2"></textarea></label>
+            </div>
+          </div>
         </div>
-        <div class="panel-head" style="margin-top:0.5rem;font-size:0.7rem">Assumptions</div>
-        <div class="assumptions-grid" id="assumptions-grid"></div>
-      </section>
 
-      <!-- Current build metrics -->
-      <section class="panel" id="sec-metrics">
-        <div class="panel-head">Current Build Metrics</div>
-        <div id="metrics-grid" class="metrics-grid"></div>
-      </section>
+      </div><!-- /tab-builder -->
+
+      <!-- Analysis tab -->
+      <div id="tab-analysis" class="hidden">
+        <div class="panel accent-red">
+          <div class="panel-head"><span class="panel-title">Combat Analysis</span></div>
+          <div class="panel-body" style="text-align:center;padding:40px 0">
+            <div style="font-size:40px;margin-bottom:12px">📊</div>
+            <div style="color:var(--tx2)">Run the optimizer to see analysis data for your build.</div>
+            <div style="color:var(--tx2);margin-top:6px">Configure assumptions in the Optimizer panel, then click Optimize.</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Compare tab -->
+      <div id="tab-compare" class="hidden">
+        <div class="panel">
+          <div class="panel-head"><span class="panel-title">Build Comparison</span></div>
+          <div class="panel-body" style="text-align:center;padding:40px 0;color:var(--tx2)">
+            Run the optimizer to generate builds, then compare them side-by-side.
+          </div>
+        </div>
+      </div>
+
+    </div><!-- /col-left -->
+
+    <!-- RIGHT COLUMN -->
+    <div id="col-right">
+
+      <!-- Build Metrics -->
+      <div class="panel accent-green">
+        <div class="panel-head"><span class="panel-title">Build Metrics</span></div>
+        <div class="panel-body">
+          <div id="radar-wrap">
+            <svg id="radar-svg" viewBox="0 0 220 220" width="200" height="200"></svg>
+          </div>
+          <div class="sep"></div>
+          <div id="metrics-grid"></div>
+        </div>
+      </div>
+
+      <!-- Optimizer -->
+      <div class="panel">
+        <div class="panel-head"><span class="panel-title">Optimizer</span></div>
+        <div class="panel-body">
+          <div class="opt-row">
+            <div class="field-label" style="min-width:120px;flex:1"><span>Objective</span><select id="f-objective"></select></div>
+            <div class="field-label" style="min-width:120px;flex:1"><span>Rule Preset</span><select id="f-rule-preset"></select></div>
+            <div class="field-label"><span>Analysis Lvl</span><input id="f-analysis-level" type="number" min="1" max="20" value="8" style="width:60px"></div>
+          </div>
+          <div style="font-size:10px;font-weight:700;letter-spacing:0.1em;text-transform:uppercase;color:var(--tx2);margin-bottom:6px">Assumptions</div>
+          <div class="assump-grid" id="assumptions-grid"></div>
+        </div>
+      </div>
 
       <!-- Results -->
-      <section class="panel" id="sec-results">
-        <div class="panel-head">Top Builds
-          <span class="panel-head-right"><small id="results-note"></small></span>
+      <div class="panel" id="sec-results">
+        <div class="panel-head">
+          <span class="panel-title">Top Builds</span>
+          <span id="results-note" style="font-size:10px;color:var(--tx2)"></span>
         </div>
-        <div id="results-list"></div>
-      </section>
+        <div class="panel-body">
+          <div id="results-list"></div>
+        </div>
+      </div>
 
       <!-- Import / Export -->
-      <section class="panel" id="sec-io">
-        <div class="panel-head">Import / Export JSON</div>
-        <textarea id="f-import-text" rows="6" placeholder="Paste exported JSON here, then click Import…"></textarea>
-        <div class="io-btns">
-          <button id="btn-import">⬆ Import</button>
-          <button id="btn-export2">⬇ Export to clipboard</button>
+      <div class="panel">
+        <div class="panel-head"><span class="panel-title">Import / Export JSON</span></div>
+        <div class="panel-body">
+          <textarea id="f-import-text" rows="4" placeholder="Paste exported JSON here, then click Import…" style="width:100%"></textarea>
+          <div class="io-row">
+            <button class="btn" id="btn-import">⬆ Import</button>
+            <button class="btn" id="btn-export2">⬇ Export to clipboard</button>
+          </div>
         </div>
-      </section>
+      </div>
 
-    </div><!-- /col-optimizer -->
+    </div><!-- /col-right -->
   </div><!-- /layout -->
-  </main><!-- /main-content -->
+  </main>
 
   <script type="module" src="./app.js"></script>
 </body>
